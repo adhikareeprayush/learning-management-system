@@ -1,0 +1,17 @@
+node_modules
+.next
+.git
+.cursor
+.claude
+.codex
+.pnpm-store
+AGENTS.md
+CLAUDE.md
+**/*.mdc
+*.md
+cookies.txt
+tsconfig.tsbuildinfo
+.env*
+!.env.example
+Dockerfile*
+docker-compose*.yml

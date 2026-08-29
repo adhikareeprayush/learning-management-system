@@ -1,36 +1,121 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LMS System
 
-## Getting Started
+Portfolio / skill-showcase learning platform — demo data, sandbox payments, and
+ImageKit-hosted assets. Not intended as a live commercial product.
 
-First, run the development server:
+## Quick start (Docker Postgres + local Next)
+
+Postgres runs in Docker. The Next app uses the host `node_modules` for fast reloads.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+# 1) Start database
+docker compose up -d db
+
+# 2) Point .env at Docker Postgres (port 5435 — host 5432 is often busy)
+# DATABASE_URL=postgresql://postgres:postgres@localhost:5435/lms
+
+# 3) Migrate + seed
+pnpm db:migrate:deploy
+pnpm db:seed
+
+# 4) Run the app
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+App: http://localhost:3005
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Demo accounts (password `password123`)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Email | Role |
+|-------|------|
+| alice@example.com | Student |
+| instructor@example.com | Instructor |
+| admin@edujarr.com | Admin |
 
-## Learn More
+### Full Docker (db + web)
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+pnpm docker:up      # builds/starts services
+pnpm docker:logs
+pnpm docker:down
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`web` mounts the project and runs `next dev` inside `node:22-bookworm-slim`. Prefer the hybrid flow above if image builds are slow.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Container database seeding
 
-## Deploy on Vercel
+The production image always applies pending migrations at startup, but it does
+not seed data by default. This prevents a container restart from overwriting
+account credentials with the demo passwords from `seed.ts`.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+For a new disposable/demo deployment, opt in for its initial container start:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+SEED_DATABASE_ON_START=true
+```
+
+Remove the setting (or set it to `false`) immediately after that initial start.
+The local quick-start and `pnpm docker:dev` workflows still run `pnpm db:seed`
+explicitly, so the demo-account workflow is unchanged.
+
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `pnpm dev` | Next on port 3005 |
+| `pnpm db:migrate:deploy` | Apply migrations |
+| `pnpm db:seed` | Seed users, 7 courses (54 lessons), 5 roadmaps, newsletter demo data |
+| `pnpm assets:sync-imagekit` | Upload `public/images` to ImageKit (`/lms/static/`) |
+| `pnpm docker:up` | Compose up |
+| `pnpm docker:down` | Compose down |
+
+## Backend API
+
+Mutation routes require a Better Auth session and enforce role and course
+ownership checks on the server. The implemented surface covers courses, modules,
+lessons, enrollment and progress, assignments, submissions and grading, reviews,
+instructor student lists, admin user roles, and media uploads under `/api`.
+
+### Media providers
+
+Non-video assets upload server-side to ImageKit. Lesson videos default to an
+unlisted YouTube upload; the returned watch URL works with the existing React
+Player component.
+
+Copy the media variables from `.env.example` into `.env.local`. ImageKit needs a
+private API key. YouTube uploads require a Google OAuth client and a refresh token
+authorized with the `youtube.upload` scope; an API key alone cannot upload videos.
+New, unaudited YouTube API projects may have uploads forced to private by Google.
+
+### Production images (ImageKit)
+
+All course thumbnails, avatars, marketing images, and certificate assets resolve
+through ImageKit when `NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT` is set.
+
+Before the first production deploy:
+
+```bash
+# 1) Configure ImageKit keys in .env
+# 2) Upload bundled static assets once
+pnpm assets:sync-imagekit
+
+# 3) Migrate + seed (seed stores ImageKit URLs when the endpoint is set)
+pnpm db:migrate:deploy
+pnpm db:seed
+```
+
+User uploads (profile photos, course thumbnails, submissions) already go through
+`/api/upload` → ImageKit at runtime.
+
+### Khalti (sandbox demo only)
+
+Paid courses can demonstrate a Khalti checkout flow using the **sandbox** API on
+both localhost and your VPS. Real Khalti production keys are not used.
+
+Optional — add a sandbox key from [test-admin.khalti.com](https://test-admin.khalti.com):
+
+```env
+KHALTI_SECRET_KEY=your_sandbox_live_secret_key
+```
+
+If the key is omitted, paid courses enroll normally without the payment step.

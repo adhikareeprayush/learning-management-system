@@ -2,25 +2,114 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #1b2336;
+  --brand-navy: #04016c;
+  --brand-purple: #7f56d9;
+  --brand-blue: #083f9b;
+  --brand-teal: #2aaa94;
+  --brand-mint: #4be5ca;
+  --muted: #4e596b;
+  --muted-light: #5e6775;
+  --surface: #f0f3ff;
+  --card: #ffffff;
+  --footer: #1a0b4e;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-brand-navy: var(--brand-navy);
+  --color-brand-purple: var(--brand-purple);
+  --color-brand-blue: var(--brand-blue);
+  --color-brand-teal: var(--brand-teal);
+  --color-brand-mint: var(--brand-mint);
+  --color-muted: var(--muted);
+  --color-muted-light: var(--muted-light);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-footer: var(--footer);
+  --font-sans: var(--font-saira);
+  --font-display: var(--font-rowdies);
+  --font-brand: var(--font-revalia);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-saira), system-ui, sans-serif;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.7s ease-out both;
+}
+
+.animate-float {
+  animation: float-soft 5s ease-in-out infinite;
+}
+
+.bg-brand-gradient {
+  background-image: linear-gradient(115deg, #083f9b 0%, #7f56d9 100%);
+}
+
+/* Hover chips: custom bg-brand-gradient is not a Tailwind color utility,
+   so never pair group-hover:text-white with group-hover:bg-brand-gradient. */
+.icon-chip {
+  color: var(--brand-purple);
+  background-color: color-mix(in srgb, var(--brand-purple) 12%, white);
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    background-image 0.15s ease;
+}
+
+.group:hover .icon-chip,
+.group:focus-visible .icon-chip {
+  color: #fff;
+  background-color: var(--brand-purple);
+  background-image: linear-gradient(115deg, #083f9b 0%, #7f56d9 100%);
+}
+
+/* Hide scrollbars on intentional horizontal carousels (still scrollable) */
+.snap-x {
+  scrollbar-width: none;
+}
+.snap-x::-webkit-scrollbar {
+  display: none;
+}
+
+.bg-hero-gradient {
+  background-image: linear-gradient(
+    244deg,
+    rgba(4, 1, 108, 0.92) 0%,
+    rgba(74, 22, 189, 0.92) 100%
+  );
+}
+
+.bg-why-gradient {
+  background-image: linear-gradient(
+    52deg,
+    rgba(8, 79, 199, 0.92) 26%,
+    rgba(127, 86, 217, 0.92) 86%
+  );
 }
