@@ -1,6 +1,8 @@
 import { errorMessage, safeFileName } from "@/lib/api";
 import { isLocalUploadEnabled, uploadToLocalDisk } from "@/lib/local-upload";
 
+export { isLocalUploadEnabled };
+
 type UploadResult = {
   provider: "imagekit" | "youtube" | "local";
   url: string;
