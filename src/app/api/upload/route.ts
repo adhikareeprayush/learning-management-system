@@ -1,5 +1,5 @@
 import { cleanString, isTeacher, jsonError, requireSession } from "@/lib/api";
-import { mediaError, uploadToImageKit, uploadToYouTube } from "@/lib/media";
+import { isLocalUploadEnabled, mediaError, uploadMediaFile, uploadToYouTube } from "@/lib/media";
 
 export const runtime = "nodejs";
 
@@ -12,6 +12,7 @@ export async function GET() {
   return Response.json({
     providers: {
       imagekit: Boolean(process.env.IMAGEKIT_PRIVATE_KEY),
+      local: isLocalUploadEnabled(),
       youtube: Boolean(process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET && process.env.YOUTUBE_REFRESH_TOKEN),
     },
   });
@@ -44,9 +45,14 @@ export async function POST(request: Request) {
   if (!IMAGE_TYPES.has(file.type) && !DOCUMENT_TYPES.has(file.type)) return jsonError("Unsupported file type", 415);
   const max = Number(process.env.IMAGEKIT_MAX_UPLOAD_MB || 25) * 1024 * 1024;
   if (file.size > max) return jsonError("File exceeds the configured upload limit", 413);
-  const folder = session.user.role === "STUDENT" ? "/lms/submissions" : "/lms/course-assets";
+  const folder =
+    session.user.role === "ADMIN"
+      ? "/lms/payment-assets"
+      : session.user.role === "STUDENT"
+        ? "/lms/submissions"
+        : "/lms/course-assets";
   try {
-    const result = await uploadToImageKit(file, folder);
+    const result = await uploadMediaFile(file, folder);
     return Response.json({ upload: result }, { status: 201 });
   } catch (error) {
     return jsonError(mediaError(error), 502);

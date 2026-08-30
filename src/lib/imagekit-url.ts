@@ -12,10 +12,16 @@ export function isRemoteMediaUrl(url: string) {
   return /^https?:\/\//i.test(url) || url.includes("ik.imagekit.io");
 }
 
+export function isLocalUploadUrl(url: string) {
+  return url.startsWith("/uploads/") || url.includes("/uploads/");
+}
+
 /** Map a local `/images/...` path to ImageKit. Remote URLs pass through unchanged. */
 export function imagekitAsset(localOrRemotePath: string): string {
   if (!localOrRemotePath) return localOrRemotePath;
-  if (isRemoteMediaUrl(localOrRemotePath)) return localOrRemotePath;
+  if (isRemoteMediaUrl(localOrRemotePath) || isLocalUploadUrl(localOrRemotePath)) {
+    return localOrRemotePath;
+  }
 
   const endpoint = getImagekitEndpoint();
   if (!endpoint) return localOrRemotePath;

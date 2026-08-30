@@ -14,6 +14,7 @@ const REQUIRED_DELEGATES = [
   "roadmapEnrollment",
   "roadmapCertificate",
   "payment",
+  "paymentMethod",
   "newsletterSubscriber",
   "newsletterCampaign",
 ] as const;

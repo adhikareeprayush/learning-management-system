@@ -11,8 +11,7 @@ export default function TermsPage() {
       <div className="mx-auto max-w-3xl space-y-4 px-5 py-14 text-muted md:px-10">
         <p>
           Edujarr is a portfolio demonstration. By using it you understand that
-          content, users, and transactions (including Khalti sandbox payments)
-          are for evaluation only.
+          content, users, and payment submissions are for evaluation only.
         </p>
         <p>
           Demo accounts use a shared password. Do not enter real personal data

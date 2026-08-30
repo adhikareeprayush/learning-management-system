@@ -1,6 +1,6 @@
 import type { Role } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { courseRequiresPayment, isKhaltiConfigured } from "@/lib/khalti";
+import { courseRequiresPayment } from "@/lib/pricing";
 
 export type EnrollUserResult =
   | {
@@ -33,7 +33,7 @@ export async function enrollUserInCourse(
     return { ok: false, error: "Course not found", status: 404 };
   }
 
-  if (courseRequiresPayment(course) && isKhaltiConfigured()) {
+  if (courseRequiresPayment(course)) {
     const payment = await prisma.payment.findFirst({
       where: { userId, courseId, status: "COMPLETED" },
       orderBy: { completedAt: "desc" },

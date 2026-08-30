@@ -15,8 +15,8 @@ const faqs = [
     a: "Complete every lesson in a course to earn a course certificate (PDF download from your dashboard). Finish all courses in a roadmap to earn a separate path certificate.",
   },
   {
-    q: "What about paid courses and Khalti?",
-    a: "Some courses show NPR pricing. If Khalti sandbox keys are configured, you'll see a demo checkout flow — test wallet, no real charge. Without keys, paid courses enroll like free ones so you can still explore.",
+    q: "What about paid courses?",
+    a: "Some courses show NPR pricing. You'll pay via eSewa, mobile banking, or Khalti QR (details shown at enrollment), upload a payment screenshot, and an admin approves your enrollment.",
   },
   {
     q: "Can I use the demo accounts?",

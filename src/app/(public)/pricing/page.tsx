@@ -18,7 +18,7 @@ const plans = [
     name: "Per course",
     price: "Varies",
     period: "",
-    description: "Published courses list USD display prices; checkout uses NPR via Khalti demo.",
+    description: "Published courses list NPR pricing; students pay via eSewa, mobile banking, or Khalti QR and upload proof.",
     perks: [
       "Full module access",
       "Assignments + quizzes",

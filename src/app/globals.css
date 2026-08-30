@@ -1,6 +1,16 @@
 @import "tailwindcss";
+@import "@fontsource/saira/400.css";
+@import "@fontsource/saira/500.css";
+@import "@fontsource/saira/600.css";
+@import "@fontsource/saira/700.css";
+@import "@fontsource/rowdies/300.css";
+@import "@fontsource/rowdies/400.css";
+@import "@fontsource/rowdies/700.css";
 
 :root {
+  --font-saira: "Saira", system-ui, sans-serif;
+  --font-rowdies: "Rowdies", system-ui, sans-serif;
+  --font-revalia: "Revalia", "Rowdies", system-ui, sans-serif;
   --background: #ffffff;
   --foreground: #1b2336;
   --brand-navy: #04016c;

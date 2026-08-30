@@ -15,11 +15,12 @@ import { CourseReviews } from "@/components/course/course-reviews";
 import { EnrollButton } from "@/components/course/enroll-button";
 import { getServerSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { getLatestPaymentForCourse } from "@/lib/payments";
 import {
   coursePaymentAmountPaisa,
-  courseShowsDemoCheckout,
+  courseRequiresPayment,
   formatNprFromPaisa,
-} from "@/lib/khalti";
+} from "@/lib/pricing";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 
 function formatPrice(cents: number) {
@@ -91,7 +92,7 @@ export default async function CourseDetailPage({ params }: Props) {
             10,
         ) / 10;
 
-  const requiresPayment = courseShowsDemoCheckout(course);
+  const requiresPayment = courseRequiresPayment(course);
   const price = requiresPayment
     ? formatNprFromPaisa(coursePaymentAmountPaisa(course))
     : formatPrice(course.price);
@@ -108,6 +109,18 @@ export default async function CourseDetailPage({ params }: Props) {
           },
         })
       : null;
+
+  const latestPayment =
+    session && requiresPayment && !enrollment
+      ? await getLatestPaymentForCourse(session.user.id, course.id)
+      : null;
+
+  const paymentStatus =
+    latestPayment?.status === "PENDING"
+      ? ("pending" as const)
+      : latestPayment?.status === "FAILED"
+        ? ("rejected" as const)
+        : ("none" as const);
 
   return (
     <div className="bg-[#f7f8fc] pb-20">
@@ -148,8 +161,10 @@ export default async function CourseDetailPage({ params }: Props) {
               <EnrollButton
                 courseId={course.id}
                 slug={course.slug}
+                courseTitle={course.title}
                 priceLabel={price}
                 requiresPayment={requiresPayment}
+                paymentStatus={paymentStatus}
                 alreadyEnrolled={
                   Boolean(enrollment) && session?.user.role === "STUDENT"
                 }

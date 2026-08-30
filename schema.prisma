@@ -39,6 +39,12 @@ enum PaymentStatus {
     EXPIRED
 }
 
+enum PaymentMethodType {
+    ESEWA
+    MOBILE_BANKING
+    KHALTI_QR
+}
+
 enum NewsletterSubscriberStatus {
     ACTIVE
     UNSUBSCRIBED
@@ -84,6 +90,7 @@ model User {
     roadmapEnrollments RoadmapEnrollment[]
     roadmapCertificates RoadmapCertificate[]
     payments Payment[]
+    paymentsReviewed Payment[] @relation("PaymentReviewer")
     newsletterCampaigns NewsletterCampaign[]
 
     @@map("users")
@@ -170,26 +177,50 @@ model Course {
     @@map("courses")
 }
 
+model PaymentMethod {
+    id String @id @default(cuid())
+    type PaymentMethodType
+    label String
+    accountInfo String
+    instructions String?
+    qrImageUrl String?
+    enabled Boolean @default(true)
+    sortOrder Int @default(0)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    payments Payment[]
+
+    @@map("payment_methods")
+}
+
 model Payment {
     id String @id @default(cuid())
     userId String
     courseId String
+    paymentMethodId String?
     purchaseOrderId String @unique
-    pidx String? @unique
+    methodType PaymentMethodType?
     amount Int
     status PaymentStatus @default(PENDING)
+    screenshotUrl String?
+    referenceNote String?
     transactionId String?
-    khaltiStatus String?
+    rejectionReason String?
     metadata Json?
+    reviewedById String?
+    reviewedAt DateTime?
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
     completedAt DateTime?
 
     user User @relation(fields: [userId], references: [id], onDelete: Cascade)
     course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+    paymentMethod PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+    reviewedBy User? @relation("PaymentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
 
     @@index([userId, courseId])
-    @@index([pidx])
+    @@index([status])
     @@map("payments")
 }
 

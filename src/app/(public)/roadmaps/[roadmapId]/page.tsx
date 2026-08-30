@@ -16,9 +16,8 @@ import { formatLevel, getRoadmapDetail } from "@/lib/roadmaps";
 import {
   coursePaymentAmountPaisa,
   courseRequiresPayment,
-  courseShowsDemoCheckout,
   formatNprFromPaisa,
-} from "@/lib/khalti";
+} from "@/lib/pricing";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 
 function formatPrice(cents: number) {
@@ -208,8 +207,9 @@ export default async function RoadmapDetailPage({ params }: Props) {
                         <EnrollButton
                           courseId={course.id}
                           slug={course.slug}
+                          courseTitle={course.title}
                           priceLabel={coursePriceLabel(course)}
-                          requiresPayment={courseShowsDemoCheckout(course)}
+                          requiresPayment={courseRequiresPayment(course)}
                         />
                       )}
                     </div>

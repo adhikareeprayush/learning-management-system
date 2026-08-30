@@ -1,21 +1,8 @@
 import type { PaymentStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { enrollUserInCourse } from "@/lib/enrollments";
-import {
-  appBaseUrl,
-  coursePaymentAmountPaisa,
-  courseRequiresPayment,
-  khaltiInitiatePayment,
-  khaltiLookupPayment,
-} from "@/lib/khalti";
-
-function mapKhaltiStatus(status: string): PaymentStatus {
-  if (status === "Completed") return "COMPLETED";
-  if (status === "User canceled") return "CANCELED";
-  if (status === "Expired") return "EXPIRED";
-  if (status === "Pending" || status === "Initiated") return "PENDING";
-  return "FAILED";
-}
+import { getPaymentMethodById } from "@/lib/payment-methods";
+import { coursePaymentAmountPaisa, courseRequiresPayment } from "@/lib/pricing";
 
 export async function getCompletedPaymentForCourse(userId: string, courseId: string) {
   return prisma.payment.findFirst({
@@ -24,21 +11,28 @@ export async function getCompletedPaymentForCourse(userId: string, courseId: str
   });
 }
 
-export async function initiateCoursePayment(input: {
+export async function getLatestPaymentForCourse(userId: string, courseId: string) {
+  return prisma.payment.findFirst({
+    where: { userId, courseId },
+    orderBy: { createdAt: "desc" },
+    include: {
+      paymentMethod: {
+        select: { id: true, label: true, type: true },
+      },
+    },
+  });
+}
+
+export async function submitCoursePayment(input: {
   userId: string;
-  userName: string;
-  userEmail: string;
   courseId: string;
+  paymentMethodId: string;
+  screenshotUrl: string;
+  referenceNote?: string | null;
 }) {
   const course = await prisma.course.findFirst({
     where: { id: input.courseId, status: "PUBLISHED" },
-    select: {
-      id: true,
-      title: true,
-      slug: true,
-      price: true,
-      priceNpr: true,
-    },
+    select: { id: true, title: true, slug: true, price: true, priceNpr: true },
   });
 
   if (!course) {
@@ -68,65 +62,64 @@ export async function initiateCoursePayment(input: {
     };
   }
 
+  const pendingPayment = await prisma.payment.findFirst({
+    where: { userId: input.userId, courseId: course.id, status: "PENDING" },
+  });
+
+  if (pendingPayment) {
+    return {
+      ok: false as const,
+      error: "You already have a payment under review for this course",
+      status: 409,
+    };
+  }
+
+  const method = await getPaymentMethodById(input.paymentMethodId);
+  if (!method || !method.enabled) {
+    return { ok: false as const, error: "Payment method not available", status: 400 };
+  }
+
   const purchaseOrderId = `course-${course.id}-${Date.now()}`;
 
   const payment = await prisma.payment.create({
     data: {
       userId: input.userId,
       courseId: course.id,
+      paymentMethodId: method.id,
+      methodType: method.type,
       purchaseOrderId,
       amount,
       status: "PENDING",
+      screenshotUrl: input.screenshotUrl,
+      referenceNote: input.referenceNote ?? null,
+    },
+    include: {
+      paymentMethod: { select: { id: true, label: true, type: true } },
     },
   });
 
-  try {
-    const khalti = await khaltiInitiatePayment({
-      return_url: `${appBaseUrl()}/payment/khalti/return?course=${course.slug}`,
-      website_url: appBaseUrl(),
-      amount,
-      purchase_order_id: purchaseOrderId,
-      purchase_order_name: course.title.slice(0, 120),
-      customer_info: {
-        name: input.userName,
-        email: input.userEmail,
-      },
-    });
-
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { pidx: khalti.pidx },
-    });
-
-    return {
-      ok: true as const,
-      paymentUrl: khalti.payment_url,
-      pidx: khalti.pidx,
+  return {
+    ok: true as const,
+    payment: {
+      id: payment.id,
+      status: payment.status,
       courseSlug: course.slug,
-    };
-  } catch (error) {
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "FAILED" },
-    });
-
-    return {
-      ok: false as const,
-      error: error instanceof Error ? error.message : "Payment initiation failed",
-      status: 502,
-    };
-  }
+      method: payment.paymentMethod,
+    },
+  };
 }
 
-export async function verifyCoursePayment(input: {
-  userId: string;
-  userRole: string;
-  pidx: string;
+export async function reviewCoursePayment(input: {
+  adminId: string;
+  paymentId: string;
+  action: "approve" | "reject";
+  rejectionReason?: string | null;
 }) {
-  const payment = await prisma.payment.findFirst({
-    where: { pidx: input.pidx, userId: input.userId },
+  const payment = await prisma.payment.findUnique({
+    where: { id: input.paymentId },
     include: {
-      course: { select: { id: true, slug: true, title: true, price: true, priceNpr: true } },
+      course: { select: { id: true, slug: true, title: true } },
+      user: { select: { id: true, role: true, name: true, email: true } },
     },
   });
 
@@ -134,84 +127,77 @@ export async function verifyCoursePayment(input: {
     return { ok: false as const, error: "Payment not found", status: 404 };
   }
 
-  if (payment.status === "COMPLETED") {
-    const enrollment = await prisma.enrollment.findUnique({
-      where: {
-        courseId_studentId: {
-          courseId: payment.courseId,
-          studentId: input.userId,
-        },
+  if (payment.status !== "PENDING") {
+    return {
+      ok: false as const,
+      error: "Only pending payments can be reviewed",
+      status: 409,
+    };
+  }
+
+  if (input.action === "reject") {
+    const reason = input.rejectionReason?.trim() || "Payment could not be verified";
+    const updated = await prisma.payment.update({
+      where: { id: payment.id },
+      data: {
+        status: "FAILED",
+        rejectionReason: reason,
+        reviewedById: input.adminId,
+        reviewedAt: new Date(),
       },
     });
 
     return {
       ok: true as const,
-      status: "COMPLETED" as const,
-      courseSlug: payment.course.slug,
-      alreadyEnrolled: Boolean(enrollment),
-      enrolled: Boolean(enrollment),
-    };
-  }
-
-  let lookup;
-  try {
-    lookup = await khaltiLookupPayment(input.pidx);
-  } catch (error) {
-    return {
-      ok: false as const,
-      error: error instanceof Error ? error.message : "Payment verification failed",
-      status: 502,
-    };
-  }
-
-  const mappedStatus = mapKhaltiStatus(lookup.status);
-
-  await prisma.payment.update({
-    where: { id: payment.id },
-    data: {
-      status: mappedStatus,
-      khaltiStatus: lookup.status,
-      transactionId: lookup.transaction_id,
-      completedAt: mappedStatus === "COMPLETED" ? new Date() : null,
-      metadata: lookup,
-    },
-  });
-
-  if (mappedStatus !== "COMPLETED") {
-    return {
-      ok: true as const,
-      status: mappedStatus,
-      khaltiStatus: lookup.status,
-      courseSlug: payment.course.slug,
+      payment: updated,
       enrolled: false,
     };
   }
 
-  if (lookup.total_amount < payment.amount) {
-    return {
-      ok: false as const,
-      error: "Paid amount does not match the course price",
-      status: 400,
-    };
-  }
+  const updated = await prisma.payment.update({
+    where: { id: payment.id },
+    data: {
+      status: "COMPLETED",
+      reviewedById: input.adminId,
+      reviewedAt: new Date(),
+      completedAt: new Date(),
+      rejectionReason: null,
+    },
+  });
 
   const enrollResult = await enrollUserInCourse(
-    input.userId,
-    input.userRole,
+    payment.userId,
+    payment.user.role,
     payment.courseId,
   );
 
-  if (!enrollResult.ok) {
+  if (!enrollResult.ok && enrollResult.status !== 409) {
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: "PENDING", completedAt: null, reviewedAt: null, reviewedById: null },
+    });
     return { ok: false as const, error: enrollResult.error, status: enrollResult.status };
   }
 
   return {
     ok: true as const,
-    status: "COMPLETED" as const,
-    khaltiStatus: lookup.status,
-    courseSlug: enrollResult.courseSlug,
+    payment: updated,
     enrolled: true,
-    alreadyEnrolled: enrollResult.alreadyEnrolled,
-    roleChanged: enrollResult.roleChanged,
+    courseSlug: enrollResult.ok ? enrollResult.courseSlug : payment.course.slug,
+    student: payment.user,
+    course: payment.course,
   };
+}
+
+export async function listPaymentsForAdmin(status?: PaymentStatus) {
+  return prisma.payment.findMany({
+    where: status ? { status } : undefined,
+    orderBy: { createdAt: "desc" },
+    include: {
+      user: { select: { id: true, name: true, email: true } },
+      course: { select: { id: true, title: true, slug: true } },
+      paymentMethod: { select: { id: true, label: true, type: true } },
+      reviewedBy: { select: { id: true, name: true } },
+    },
+  });
 }

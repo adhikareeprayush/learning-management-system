@@ -1,12 +1,29 @@
 import { errorMessage, safeFileName } from "@/lib/api";
+import { isLocalUploadEnabled, uploadToLocalDisk } from "@/lib/local-upload";
 
 type UploadResult = {
-  provider: "imagekit" | "youtube";
+  provider: "imagekit" | "youtube" | "local";
   url: string;
   fileId: string;
   name: string;
   thumbnailUrl?: string;
 };
+
+export function isImageKitConfigured() {
+  return Boolean(process.env.IMAGEKIT_PRIVATE_KEY?.trim());
+}
+
+export async function uploadMediaFile(file: File, folder: string): Promise<UploadResult> {
+  if (isImageKitConfigured()) {
+    return uploadToImageKit(file, folder);
+  }
+  if (isLocalUploadEnabled()) {
+    return uploadToLocalDisk(file, folder);
+  }
+  throw new Error(
+    "IMAGEKIT_PRIVATE_KEY is not configured. Add ImageKit keys to .env or see README.",
+  );
+}
 
 async function parseProviderError(response: Response) {
   const body = await response.text();

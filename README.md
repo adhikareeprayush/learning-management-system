@@ -1,6 +1,6 @@
 # LMS System
 
-Portfolio / skill-showcase learning platform — demo data, sandbox payments, and
+Portfolio / skill-showcase learning platform — demo data, manual payment enrollment, and
 ImageKit-hosted assets. Not intended as a live commercial product.
 
 ## Quick start (Docker Postgres + local Next)
@@ -107,15 +107,62 @@ pnpm db:seed
 User uploads (profile photos, course thumbnails, submissions) already go through
 `/api/upload` → ImageKit at runtime.
 
-### Khalti (sandbox demo only)
+### Manual payments (eSewa, mobile banking, Khalti QR)
 
-Paid courses can demonstrate a Khalti checkout flow using the **sandbox** API on
-both localhost and your VPS. Real Khalti production keys are not used.
+Paid courses require students to pay offline and upload a screenshot. Admins configure payment methods and review submissions under **Admin → Payments**.
 
-Optional — add a sandbox key from [test-admin.khalti.com](https://test-admin.khalti.com):
+1. Student clicks Enroll on a paid course → sees eSewa / mobile banking / Khalti QR details
+2. Student pays and uploads a screenshot with optional transaction reference
+3. Admin approves → student is enrolled automatically
 
-```env
-KHALTI_SECRET_KEY=your_sandbox_live_secret_key
+Seed data includes three demo payment methods. Upload QR images in the admin panel when ready.
+
+## Deploy: Vercel + Supabase
+
+**Database:** [Supabase](https://supabase.com) (managed Postgres). **App:** [Vercel](https://vercel.com).
+
+### 1. Supabase project
+
+1. Create a project at supabase.com
+2. In **Project Settings → Database**, copy:
+   - **Transaction pooler** URI (port `6543`) → `DATABASE_URL`
+   - **Direct connection** URI (port `5432`) → `DIRECT_URL`
+3. Append `?pgbouncer=true` to the pooler URL if not present (required for Prisma on serverless)
+
+### 2. Vercel project
+
+Connect the Git repo and set environment variables:
+
+| Variable | Value |
+|----------|--------|
+| `DATABASE_URL` | Supabase transaction pooler URL |
+| `DIRECT_URL` | Supabase direct connection URL |
+| `BETTER_AUTH_SECRET` | Random 32+ char secret |
+| `BETTER_AUTH_URL` | `https://your-app.vercel.app` |
+| `NEXT_PUBLIC_APP_URL` | Same as above |
+| `IMAGEKIT_*` | ImageKit keys (required for uploads) |
+| `NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT` | ImageKit CDN endpoint |
+
+Vercel runs `pnpm vercel-build`, which applies Prisma migrations then builds Next.js.
+
+### 3. First deploy checklist
+
+```bash
+# Locally against Supabase (one-time seed)
+DATABASE_URL="..." DIRECT_URL="..." pnpm db:migrate:deploy
+DATABASE_URL="..." DIRECT_URL="..." pnpm db:seed
+pnpm assets:sync-imagekit   # if using ImageKit for static assets
 ```
 
-If the key is omitted, paid courses enroll normally without the payment step.
+After deploy, sign in as `admin@edujarr.com` / `password123` and configure payment methods under **Admin → Payments**.
+
+### Local development
+
+Use Docker Postgres (optional) or point `.env` at your Supabase **direct** URL for local `pnpm dev`:
+
+```bash
+docker compose up -d db   # optional local Postgres on port 5435
+pnpm db:migrate:deploy
+pnpm db:seed
+pnpm dev
+```

@@ -831,6 +831,39 @@ export const roadmapCatalog: RoadmapSeed[] = [
   },
 ];
 
+export const paymentMethodSeed = [
+  {
+    id: "seed-payment-esewa",
+    type: "ESEWA" as const,
+    label: "eSewa",
+    accountInfo: "9801122334",
+    instructions: "Send the exact course fee to this eSewa ID. Use your full name in the remarks.",
+    qrImageUrl: null,
+    enabled: true,
+    sortOrder: 0,
+  },
+  {
+    id: "seed-payment-mobile-banking",
+    type: "MOBILE_BANKING" as const,
+    label: "Mobile Banking (NMB)",
+    accountInfo: "0123456789012345 · Edujarr Learning Pvt. Ltd.",
+    instructions: "Transfer via mobile banking and upload the confirmation screenshot.",
+    qrImageUrl: null,
+    enabled: true,
+    sortOrder: 1,
+  },
+  {
+    id: "seed-payment-khalti-qr",
+    type: "KHALTI_QR" as const,
+    label: "Khalti QR",
+    accountInfo: "edujarr@khalti",
+    instructions: "Scan the Khalti QR (upload one in Admin → Payments) and screenshot the success screen.",
+    qrImageUrl: null,
+    enabled: true,
+    sortOrder: 2,
+  },
+];
+
 export const newsletterSubscriberSeed = [
   { email: "priya.sharma@example.com", name: "Priya Sharma", source: "footer" },
   { email: "michael.chen@example.com", name: "Michael Chen", source: "footer" },

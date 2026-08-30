@@ -8,6 +8,7 @@ import {
   courseCatalog,
   newsletterCampaignSeed,
   newsletterSubscriberSeed,
+  paymentMethodSeed,
   roadmapCatalog,
 } from "./seed/catalog";
 import { linkRoadmapCourse, seedCourseWithModules } from "./seed/helpers";
@@ -606,6 +607,31 @@ async function main() {
     },
   });
 
+  for (const method of paymentMethodSeed) {
+    await prisma.paymentMethod.upsert({
+      where: { id: method.id },
+      update: {
+        type: method.type,
+        label: method.label,
+        accountInfo: method.accountInfo,
+        instructions: method.instructions,
+        qrImageUrl: method.qrImageUrl ? asset(method.qrImageUrl) : null,
+        enabled: method.enabled,
+        sortOrder: method.sortOrder,
+      },
+      create: {
+        id: method.id,
+        type: method.type,
+        label: method.label,
+        accountInfo: method.accountInfo,
+        instructions: method.instructions,
+        qrImageUrl: method.qrImageUrl ? asset(method.qrImageUrl) : null,
+        enabled: method.enabled,
+        sortOrder: method.sortOrder,
+      },
+    });
+  }
+
   for (const subscriber of newsletterSubscriberSeed) {
     const subscribedAt = new Date();
     subscribedAt.setDate(subscribedAt.getDate() - Math.floor(Math.random() * 45));
@@ -675,6 +701,7 @@ async function main() {
     roadmaps: [...roadmapsBySlug.keys()],
     newsletterSubscribers: newsletterSubscriberSeed.length,
     newsletterCampaigns: newsletterCampaignSeed.length,
+    paymentMethods: paymentMethodSeed.length,
     assignments: [assignment.title, "Mini LMS dashboard"],
   });
 }

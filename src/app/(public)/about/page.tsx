@@ -20,13 +20,13 @@ export default function AboutPage() {
           Edujarr bundles the pieces you&apos;d expect in a real learning product:
           course catalogs, module-based lessons, student progress, instructor
           authoring, admin tools, certificates, roadmaps, newsletter management,
-          and a Khalti sandbox checkout. Everything is wired to a PostgreSQL
+          and manual payment enrollment (eSewa, mobile banking, Khalti QR). Everything is wired to a PostgreSQL
           database and Better Auth sessions.
         </p>
         <p className="leading-relaxed text-muted">
           The content is demo data — Jane Instructor teaches the web courses,
-          sample students have realistic progress, and paid enrollments can run
-          through Khalti&apos;s test environment. It&apos;s meant to be clicked
+          sample students have realistic progress, and paid enrollments require
+          a payment screenshot reviewed by an admin. It&apos;s meant to be clicked
           through, not mistaken for a live commercial platform.
         </p>
         <div className="rounded-2xl border border-black/5 bg-surface/50 p-6">

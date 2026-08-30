@@ -47,7 +47,7 @@ export default async function HomePage() {
             </h1>
             <p className="max-w-lg text-base leading-relaxed text-white/80 md:text-lg">
               Edujarr is a learning platform demo — real enrollments, lesson
-              progress, Khalti sandbox checkout, and path certificates. Built as
+              progress, manual payment enrollment, and path certificates. Built as
               a portfolio piece, not a course marketplace clone.
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-1">
@@ -232,7 +232,7 @@ export default async function HomePage() {
             </h2>
             <p className="mt-5 text-lg leading-relaxed text-white/80">
               Student dashboards, instructor workspaces, admin newsletter tools,
-              ImageKit media, and Khalti sandbox payments — wired end to end so
+              ImageKit media, and screenshot-based payments — wired end to end so
               you can click through a real flow, not a Figma mock.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">

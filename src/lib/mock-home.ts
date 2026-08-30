@@ -156,15 +156,15 @@ export const blogPosts = [
     ],
   },
   {
-    id: "khalti-demo-checkout",
-    title: "Trying the Khalti demo checkout",
+    id: "manual-payment-enrollment",
+    title: "Enrolling in a paid course",
     excerpt:
-      "Paid courses on Edujarr use Khalti's sandbox — no real charges, full flow.",
+      "Pay via eSewa, mobile banking, or Khalti QR — then upload your screenshot for admin review.",
     date: "Jul 28, 2026",
     tag: "Payments",
     body: [
-      "Some courses show a price in NPR and a Try demo checkout button. That runs through Khalti's sandbox environment: test wallet IDs, fake OTP, real redirect and verify flow — useful if you're evaluating how payments would work in production.",
-      "Free courses and lessons marked as preview enroll instantly. If sandbox keys aren't configured on the server, paid courses enroll without the payment step so you can still explore the learning UI.",
+      "Paid courses show NPR pricing. When you enroll, you'll see payment details configured in the admin panel — account numbers, instructions, and optional QR codes for eSewa, mobile banking, or Khalti.",
+      "After paying, upload a screenshot of the transaction. An admin reviews it and approves enrollment. Free courses and preview lessons enroll instantly.",
     ],
   },
 ] as const;

@@ -44,35 +44,32 @@ export async function enrollInCourse(courseId: string): Promise<{
   };
 }
 
-export async function startKhaltiPayment(courseId: string): Promise<{
+export async function submitCoursePayment(input: {
+  courseId: string;
+  paymentMethodId: string;
+  screenshotUrl: string;
+  referenceNote?: string;
+}): Promise<{
   ok: boolean;
-  paymentUrl?: string;
   error?: string;
   status: number;
 }> {
-  const res = await fetch("/api/payments/khalti/initiate", {
+  const res = await fetch("/api/payments/submit", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ courseId }),
+    body: JSON.stringify(input),
   });
-  const data = (await res.json().catch(() => ({}))) as {
-    paymentUrl?: string;
-    error?: string;
-  };
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
 
   if (!res.ok) {
     return {
       ok: false,
       status: res.status,
-      error: data.error ?? "Could not start payment",
+      error: data.error ?? "Could not submit payment",
     };
   }
 
-  return {
-    ok: true,
-    status: res.status,
-    paymentUrl: data.paymentUrl,
-  };
+  return { ok: true, status: res.status };
 }
 
 export function studentCoursePath(slug: string) {
