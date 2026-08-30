@@ -124,10 +124,14 @@ Seed data includes three demo payment methods. Upload QR images in the admin pan
 ### 1. Supabase project
 
 1. Create a project at supabase.com
-2. In **Project Settings → Database**, copy:
-   - **Transaction pooler** URI (port `6543`) → `DATABASE_URL`
-   - **Direct connection** URI (port `5432`) → `DIRECT_URL`
-3. Append `?pgbouncer=true` to the pooler URL if not present (required for Prisma on serverless)
+2. In **Connect** (or **Database → Connection string**), copy:
+   - **Transaction pooler** URI (port `6543`) → Vercel `DATABASE_URL`
+   - Append `?pgbouncer=true` if not present (required for Prisma on serverless)
+3. Run migrations **locally** before deploy (Vercel build does not migrate — Supabase direct port 5432 is often unreachable from Vercel's build network):
+
+```bash
+pnpm db:migrate:deploy
+```
 
 ### 2. Vercel project
 
@@ -135,23 +139,25 @@ Connect the Git repo and set environment variables:
 
 | Variable | Value |
 |----------|--------|
-| `DATABASE_URL` | Supabase transaction pooler URL |
-| `DIRECT_URL` | Supabase direct connection URL |
+| `DATABASE_URL` | Supabase **transaction pooler** (port `6543`, `?pgbouncer=true`) — **not** `db.xxx.supabase.co:5432` |
 | `BETTER_AUTH_SECRET` | Random 32+ char secret |
 | `BETTER_AUTH_URL` | `https://your-app.vercel.app` |
 | `NEXT_PUBLIC_APP_URL` | Same as above |
 | `IMAGEKIT_*` | ImageKit keys (required for uploads) |
 | `NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT` | ImageKit CDN endpoint |
 
-Vercel runs `pnpm vercel-build`, which applies Prisma migrations then builds Next.js.
+`DIRECT_URL` is optional on Vercel (only needed if you run migrations in CI). Do **not** use the direct `db.xxx.supabase.co:5432` URL as `DATABASE_URL` on Vercel.
+
+Vercel runs `pnpm vercel-build` (`prisma generate` + `next build`). Apply schema changes locally with `pnpm db:migrate:deploy` before pushing.
 
 ### 3. First deploy checklist
 
 ```bash
-# Locally against Supabase (one-time seed)
-DATABASE_URL="..." DIRECT_URL="..." pnpm db:migrate:deploy
-DATABASE_URL="..." DIRECT_URL="..." pnpm db:seed
-pnpm assets:sync-imagekit   # if using ImageKit for static assets
+# Already done if you seeded locally — re-run when you add new migrations
+pnpm db:migrate:deploy
+pnpm db:seed
+pnpm assets:sync-imagekit   # optional: ImageKit CDN for static images
+git push   # triggers Vercel deploy
 ```
 
 After deploy, sign in as `admin@edujarr.com` / `password123` and configure payment methods under **Admin → Payments**.

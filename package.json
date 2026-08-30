@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --port 3005",
     "build": "next build --webpack",
-    "vercel-build": "prisma generate && prisma migrate deploy && next build --webpack",
+    "vercel-build": "prisma generate && next build --webpack",
     "start": "next start --port 3005",
     "lint": "eslint",
     "db:generate": "prisma generate",
