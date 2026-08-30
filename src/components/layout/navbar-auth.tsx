@@ -26,6 +26,31 @@ function roleToDashboardRole(role: string | undefined): DashboardRole {
   return "student";
 }
 
+function GuestAuthLinks() {
+  return (
+    <>
+      <Link
+        href="/login"
+        className="text-[17px] font-medium text-[#4a4a4a] underline underline-offset-4"
+      >
+        Login
+      </Link>
+      <Button href="/register" className="h-[48px] min-w-[120px]">
+        Signup
+      </Button>
+    </>
+  );
+}
+
+async function loadSessionUser(): Promise<SessionUser | null> {
+  try {
+    const result = await authClient.getSession();
+    return (result.data?.user as SessionUser | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function NavbarAuth() {
   const router = useRouter();
   const [user, setUser] = useState<SessionUser | null>(null);
@@ -36,10 +61,9 @@ export function NavbarAuth() {
 
   useEffect(() => {
     let active = true;
-    authClient.getSession().then((result) => {
+    void loadSessionUser().then((sessionUser) => {
       if (!active) return;
-      const sessionUser = result.data?.user as SessionUser | undefined;
-      setUser(sessionUser ?? null);
+      setUser(sessionUser);
       setLoading(false);
     });
     return () => {
@@ -75,32 +99,14 @@ export function NavbarAuth() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="hidden h-12 w-[220px] animate-pulse rounded-xl bg-surface lg:block" />
-    );
-  }
-
-  if (!user) {
-    return (
-      <>
-        <Link
-          href="/login"
-          className="hidden text-[17px] font-medium text-[#4a4a4a] underline underline-offset-4 lg:inline"
-        >
-          Login
-        </Link>
-        <Button href="/register" className="hidden h-[48px] min-w-[120px] lg:inline-flex">
-          Signup
-        </Button>
-      </>
-    );
+  if (loading || !user) {
+    return <GuestAuthLinks />;
   }
 
   const dashboardRole = roleToDashboardRole(user.role);
 
   return (
-    <div ref={ref} className="relative hidden lg:block">
+    <div ref={ref} className="relative">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -167,12 +173,18 @@ export function NavbarAuth() {
 export function MobileNavbarAuth({ onNavigate }: { onNavigate?: () => void }) {
   const router = useRouter();
   const [user, setUser] = useState<SessionUser | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    authClient.getSession().then((result) => {
-      const sessionUser = result.data?.user as SessionUser | undefined;
-      setUser(sessionUser ?? null);
+    let active = true;
+    void loadSessionUser().then((sessionUser) => {
+      if (!active) return;
+      setUser(sessionUser);
+      setLoading(false);
     });
+    return () => {
+      active = false;
+    };
   }, []);
 
   async function signOut() {
@@ -182,7 +194,7 @@ export function MobileNavbarAuth({ onNavigate }: { onNavigate?: () => void }) {
     router.refresh();
   }
 
-  if (!user) {
+  if (loading || !user) {
     return (
       <div className="mt-4 flex gap-3">
         <Link
