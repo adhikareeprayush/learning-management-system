@@ -56,7 +56,7 @@ export async function GET(_request: Request, { params }: Params) {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="${filename}"`,
-      "Cache-Control": "private, max-age=3600",
+      "Cache-Control": "no-store",
     },
   });
 }

@@ -12,15 +12,22 @@ const DEFAULT_ORG_SLUG =
   process.env.DEFAULT_ORG_SLUG?.trim().toLowerCase() || "edujarr";
 
 export async function getDefaultOrganization() {
-  const bySlug = await prisma.organization.findUnique({
-    where: { slug: DEFAULT_ORG_SLUG },
-  });
-  if (bySlug) return bySlug;
+  try {
+    const bySlug = await prisma.organization.findUnique({
+      where: { slug: DEFAULT_ORG_SLUG },
+    });
+    if (bySlug) return bySlug;
 
-  const first = await prisma.organization.findFirst({
-    orderBy: { createdAt: "asc" },
-  });
-  return first;
+    return await prisma.organization.findFirst({
+      orderBy: { createdAt: "asc" },
+    });
+  } catch (error) {
+    console.error(
+      "[tenant] database unreachable — check DATABASE_URL (local Docker on :5435, or Supabase pooler).",
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
 }
 
 export async function resolveTenantFromHeaders(): Promise<TenantContext | null> {

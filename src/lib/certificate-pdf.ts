@@ -6,7 +6,9 @@ import {
   StandardFonts,
   type PDFPage,
   type PDFFont,
+  type PDFImage,
 } from "pdf-lib";
+import { CERTIFICATE_LAYOUT } from "@/lib/certificate-design";
 import { staticAssets } from "@/lib/static-assets";
 import { imagekitAsset } from "@/lib/imagekit-url";
 
@@ -14,6 +16,15 @@ export type CertificatePdfInput = {
   studentName: string;
   courseTitle: string;
   instructorName: string;
+  category?: string | null;
+  credentialId: string;
+  issuedAt: Date;
+};
+
+export type RoadmapCertificatePdfInput = {
+  studentName: string;
+  roadmapTitle: string;
+  courseCount: number;
   category?: string | null;
   credentialId: string;
   issuedAt: Date;
@@ -29,6 +40,11 @@ const BRAND = {
   white: rgb(1, 1, 1),
 };
 
+const PAGE = CERTIFICATE_LAYOUT.page;
+const FRAME_OUTER = CERTIFICATE_LAYOUT.frameOuter;
+const FRAME_INNER = CERTIFICATE_LAYOUT.frameInner;
+const L = CERTIFICATE_LAYOUT;
+
 let cachedLogo: Uint8Array | null = null;
 
 async function loadLogoBytes() {
@@ -38,7 +54,9 @@ async function loadLogoBytes() {
   if (remoteUrl.startsWith("http")) {
     const response = await fetch(remoteUrl);
     if (!response.ok) {
-      throw new Error(`Failed to load certificate logo from ImageKit (${response.status})`);
+      throw new Error(
+        `Failed to load certificate logo from ImageKit (${response.status})`,
+      );
     }
     cachedLogo = new Uint8Array(await response.arrayBuffer());
     return cachedLogo;
@@ -58,6 +76,7 @@ function wrapText(
   font: PDFFont,
   size: number,
   maxWidth: number,
+  maxLines = 3,
 ): string[] {
   const words = text.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
@@ -70,35 +89,30 @@ function wrapText(
     } else {
       if (current) lines.push(current);
       current = word;
+      if (lines.length >= maxLines) break;
     }
   }
-  if (current) lines.push(current);
-  return lines.length > 0 ? lines : [text];
+  if (current && lines.length < maxLines) lines.push(current);
+
+  if (
+    lines.length === maxLines &&
+    words.join(" ").length > lines.join(" ").length
+  ) {
+    let trimmed = lines[maxLines - 1];
+    while (
+      trimmed.length > 1 &&
+      font.widthOfTextAtSize(`${trimmed}…`, size) > maxWidth
+    ) {
+      trimmed = trimmed.slice(0, -1);
+    }
+    lines[maxLines - 1] = `${trimmed}…`;
+  }
+
+  return lines.length > 0 ? lines : [text.slice(0, 40)];
 }
 
-function drawCenteredLines(
-  page: PDFPage,
-  lines: string[],
-  yStart: number,
-  font: PDFFont,
-  size: number,
-  color: ReturnType<typeof rgb>,
-  lineHeight: number,
-) {
-  const { width } = page.getSize();
-  let y = yStart;
-  for (const line of lines) {
-    const textWidth = font.widthOfTextAtSize(line, size);
-    page.drawText(line, {
-      x: (width - textWidth) / 2,
-      y,
-      size,
-      font,
-      color,
-    });
-    y -= lineHeight;
-  }
-  return y;
+function centerX(pageWidth: number, text: string, font: PDFFont, size: number) {
+  return (pageWidth - font.widthOfTextAtSize(text, size)) / 2;
 }
 
 function drawCornerBracket(
@@ -127,323 +141,431 @@ function drawCornerBracket(
   });
 }
 
-function drawFrame(page: PDFPage) {
+function drawPaperAndFrame(page: PDFPage) {
   const { width, height } = page.getSize();
-  const outer = 28;
-  const inner = 40;
+  page.drawRectangle({ x: 0, y: 0, width, height, color: BRAND.paper });
 
   page.drawRectangle({
-    x: outer,
-    y: outer,
-    width: width - outer * 2,
-    height: height - outer * 2,
+    x: FRAME_OUTER,
+    y: FRAME_OUTER,
+    width: width - FRAME_OUTER * 2,
+    height: height - FRAME_OUTER * 2,
     borderColor: BRAND.navy,
     borderWidth: 0.75,
     borderOpacity: 0.2,
-    color: BRAND.paper,
+    color: undefined,
   });
-
   page.drawRectangle({
-    x: inner,
-    y: inner,
-    width: width - inner * 2,
-    height: height - inner * 2,
+    x: FRAME_INNER,
+    y: FRAME_INNER,
+    width: width - FRAME_INNER * 2,
+    height: height - FRAME_INNER * 2,
     borderColor: BRAND.teal,
     borderWidth: 0.5,
-    borderOpacity: 0.3,
+    borderOpacity: 0.28,
     color: undefined,
   });
 
-  const bracket = 18;
-  drawCornerBracket(page, outer + 6, height - outer - 6, bracket, false, false);
-  drawCornerBracket(page, width - outer - 6, height - outer - 6, bracket, true, false);
-  drawCornerBracket(page, outer + 6, outer + 6, bracket, false, true);
-  drawCornerBracket(page, width - outer - 6, outer + 6, bracket, true, true);
+  const b = 18;
+  drawCornerBracket(page, FRAME_OUTER + 6, height - FRAME_OUTER - 6, b, false, false);
+  drawCornerBracket(page, width - FRAME_OUTER - 6, height - FRAME_OUTER - 6, b, true, false);
+  drawCornerBracket(page, FRAME_OUTER + 6, FRAME_OUTER + 6, b, false, true);
+  drawCornerBracket(page, width - FRAME_OUTER - 6, FRAME_OUTER + 6, b, true, true);
+}
+
+const SEAL_RADIUS = 28;
+
+function drawSeal(page: PDFPage, logo: PDFImage, x: number, y: number) {
+  page.drawCircle({
+    x,
+    y,
+    size: SEAL_RADIUS,
+    borderColor: BRAND.teal,
+    borderWidth: 2,
+    color: BRAND.white,
+  });
+  const logoH = 26;
+  const logoW = (logo.width / logo.height) * logoH;
+  page.drawImage(logo, {
+    x: x - logoW / 2,
+    y: y - logoH / 2,
+    width: logoW,
+    height: logoH,
+  });
+}
+
+type SharedFonts = {
+  helvetica: PDFFont;
+  helveticaBold: PDFFont;
+  timesItalic: PDFFont;
+  timesBold: PDFFont;
+};
+
+/**
+ * Formal certificate: header fixed at top, footer fixed at bottom,
+ * body centered in the remaining middle — no blank strip under the ID.
+ */
+function drawCertificateLayout(
+  page: PDFPage,
+  logo: PDFImage,
+  fonts: SharedFonts,
+  content: {
+    label: string;
+    studentName: string;
+    presentedLine: string;
+    completingLine: string;
+    title: string;
+    subtitle?: string | null;
+    leftName: string;
+    leftRole: string;
+    rightName: string;
+    rightRole: string;
+    credentialId: string;
+  },
+) {
+  const { width, height } = page.getSize();
+  const { helvetica, helveticaBold, timesItalic, timesBold } = fonts;
+  const contentWidth = width - L.margin * 2 - 24;
+  const cx = width / 2;
+
+  const nameSize = L.nameSize;
+  const titleSize = L.titleSize;
+  const supportSize = L.supportSize;
+  const nameLines = wrapText(content.studentName, timesBold, nameSize, contentWidth, 2);
+  const titleLines = wrapText(content.title, helveticaBold, titleSize, contentWidth - 40, 3);
+
+  // ── Fixed footer: seal, VERIFIED clear below arc, then signatures + id ──
+  const credY = FRAME_INNER + 20;
+  const verifiedY = credY + 30;
+  const sealY = verifiedY + 16 + SEAL_RADIUS;
+  // Signature line above name/role with room for 11pt glyphs (pdf baseline).
+  const nameY = verifiedY + 12;
+  const lineY = nameY + 18;
+  const roleY = nameY - 14;
+  const footerTop = sealY + SEAL_RADIUS + 10;
+
+  const colW = 180;
+  const leftX = cx - colW - 78;
+  const rightX = cx + 78;
+
+  drawSeal(page, logo, cx, sealY);
+  const verified = "VERIFIED";
+  page.drawText(verified, {
+    x: centerX(width, verified, helvetica, 7),
+    y: verifiedY,
+    size: 7,
+    font: helvetica,
+    color: BRAND.teal,
+  });
+
+  page.drawLine({
+    start: { x: leftX, y: lineY },
+    end: { x: leftX + colW, y: lineY },
+    thickness: 0.8,
+    color: BRAND.rule,
+  });
+  page.drawText(content.leftName.slice(0, 40), {
+    x: leftX,
+    y: nameY,
+    size: 11,
+    font: helveticaBold,
+    color: BRAND.ink,
+  });
+  page.drawText(content.leftRole, {
+    x: leftX,
+    y: roleY,
+    size: 9,
+    font: helvetica,
+    color: BRAND.muted,
+  });
+
+  page.drawLine({
+    start: { x: rightX, y: lineY },
+    end: { x: rightX + colW, y: lineY },
+    thickness: 0.8,
+    color: BRAND.rule,
+  });
+  const rightName = content.rightName.slice(0, 40);
+  page.drawText(rightName, {
+    x: rightX + colW - helveticaBold.widthOfTextAtSize(rightName, 11),
+    y: nameY,
+    size: 11,
+    font: helveticaBold,
+    color: BRAND.ink,
+  });
+  page.drawText(content.rightRole, {
+    x: rightX + colW - helvetica.widthOfTextAtSize(content.rightRole, 9),
+    y: roleY,
+    size: 9,
+    font: helvetica,
+    color: BRAND.muted,
+  });
+
+  const cred = `Credential ID · ${content.credentialId}`;
+  page.drawText(cred, {
+    x: centerX(width, cred, helvetica, 8),
+    y: credY,
+    size: 8,
+    font: helvetica,
+    color: BRAND.muted,
+  });
+
+  // ── Header (fixed at top) ──
+  let headerY = height - L.margin - 4;
+  const logoH = 32;
+  const logoW = (logo.width / logo.height) * logoH;
+  const brandSize = 17;
+  const brandGap = 9;
+  const brandW =
+    logoW + brandGap + helveticaBold.widthOfTextAtSize("Edujarr", brandSize);
+  const brandX = (width - brandW) / 2;
+  page.drawImage(logo, {
+    x: brandX,
+    y: headerY - logoH + 9,
+    width: logoW,
+    height: logoH,
+  });
+  page.drawText("Edu", {
+    x: brandX + logoW + brandGap,
+    y: headerY - 11,
+    size: brandSize,
+    font: helveticaBold,
+    color: BRAND.navy,
+  });
+  page.drawText("jarr", {
+    x:
+      brandX +
+      logoW +
+      brandGap +
+      helveticaBold.widthOfTextAtSize("Edu", brandSize),
+    y: headerY - 11,
+    size: brandSize,
+    font: helveticaBold,
+    color: BRAND.teal,
+  });
+  headerY -= 34;
+
+  page.drawLine({
+    start: { x: cx - 56, y: headerY },
+    end: { x: cx + 56, y: headerY },
+    thickness: 0.7,
+    color: BRAND.rule,
+  });
+  headerY -= 16;
+
+  page.drawText(content.label, {
+    x: centerX(width, content.label, helveticaBold, 9),
+    y: headerY,
+    size: 9,
+    font: helveticaBold,
+    color: BRAND.navy,
+  });
+  headerY -= 14;
+
+  page.drawLine({
+    start: { x: cx - 44, y: headerY },
+    end: { x: cx - 8, y: headerY },
+    thickness: 0.7,
+    color: BRAND.rule,
+  });
+  page.drawLine({
+    start: { x: cx + 8, y: headerY },
+    end: { x: cx + 44, y: headerY },
+    thickness: 0.7,
+    color: BRAND.rule,
+  });
+  page.drawLine({
+    start: { x: cx, y: headerY + 3 },
+    end: { x: cx + 3, y: headerY },
+    thickness: 1,
+    color: BRAND.teal,
+  });
+  page.drawLine({
+    start: { x: cx + 3, y: headerY },
+    end: { x: cx, y: headerY - 3 },
+    thickness: 1,
+    color: BRAND.teal,
+  });
+  page.drawLine({
+    start: { x: cx, y: headerY - 3 },
+    end: { x: cx - 3, y: headerY },
+    thickness: 1,
+    color: BRAND.teal,
+  });
+  page.drawLine({
+    start: { x: cx - 3, y: headerY },
+    end: { x: cx, y: headerY + 3 },
+    thickness: 1,
+    color: BRAND.teal,
+  });
+  const headerBottom = headerY - 8;
+
+  // ── Body centered between header and footer ──
+  // pdf-lib y is baseline; keep name clear of neighbors without excess air.
+  const afterPresented = Math.ceil(nameSize * 0.74) + 2;
+  const nameLineGap = 6;
+  const afterCompleting = Math.ceil(titleSize * 0.72) + 4;
+  const underName = Math.ceil(nameSize * 0.2); // rule snug under glyphs
+
+  const bodyBlockH =
+    supportSize +
+    afterPresented +
+    nameLines.length * nameSize +
+    Math.max(0, nameLines.length - 1) * nameLineGap +
+    underName +
+    14 +
+    supportSize +
+    afterCompleting +
+    titleLines.length * (titleSize + 6) +
+    (content.subtitle ? 24 : 0);
+
+  const bodyTop = headerBottom - 20;
+  const bodyBottom = footerTop + 16;
+  const available = bodyTop - bodyBottom;
+  let y =
+    available > bodyBlockH
+      ? bodyBottom + (available + bodyBlockH) / 2
+      : bodyTop;
+
+  page.drawText(content.presentedLine, {
+    x: centerX(width, content.presentedLine, timesItalic, supportSize),
+    y,
+    size: supportSize,
+    font: timesItalic,
+    color: BRAND.muted,
+  });
+  y -= afterPresented;
+
+  let nameBaseline = y;
+  for (let i = 0; i < nameLines.length; i++) {
+    const line = nameLines[i];
+    page.drawText(line, {
+      x: centerX(width, line, timesBold, nameSize),
+      y,
+      size: nameSize,
+      font: timesBold,
+      color: BRAND.navy,
+    });
+    nameBaseline = y;
+    if (i < nameLines.length - 1) y -= nameSize + nameLineGap;
+  }
+
+  // Thin rule snug under the name, then completing line close below.
+  const ruleY = nameBaseline - underName;
+  page.drawLine({
+    start: { x: cx - 90, y: ruleY },
+    end: { x: cx + 90, y: ruleY },
+    thickness: 0.55,
+    color: BRAND.navy,
+    opacity: 0.2,
+  });
+  page.drawLine({
+    start: { x: cx - 64, y: ruleY - 3 },
+    end: { x: cx + 64, y: ruleY - 3 },
+    thickness: 0.55,
+    color: BRAND.teal,
+    opacity: 0.4,
+  });
+  y = ruleY - 12;
+
+  page.drawText(content.completingLine, {
+    x: centerX(width, content.completingLine, timesItalic, supportSize),
+    y,
+    size: supportSize,
+    font: timesItalic,
+    color: BRAND.muted,
+  });
+  y -= afterCompleting;
+
+  for (const line of titleLines) {
+    page.drawText(line, {
+      x: centerX(width, line, helveticaBold, titleSize),
+      y,
+      size: titleSize,
+      font: helveticaBold,
+      color: BRAND.ink,
+    });
+    y -= titleSize + 6;
+  }
+
+  if (content.subtitle) {
+    const sub = content.subtitle.toUpperCase();
+    page.drawText(sub, {
+      x: centerX(width, sub, helvetica, 9),
+      y: y - 6,
+      size: 9,
+      font: helvetica,
+      color: BRAND.teal,
+    });
+  }
+}
+
+async function createLandscapeDoc() {
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([PAGE.width, PAGE.height]);
+  const fonts: SharedFonts = {
+    helvetica: await pdfDoc.embedFont(StandardFonts.Helvetica),
+    helveticaBold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
+    timesItalic: await pdfDoc.embedFont(StandardFonts.TimesRomanItalic),
+    timesBold: await pdfDoc.embedFont(StandardFonts.TimesRomanBold),
+  };
+  const logo = await pdfDoc.embedPng(await loadLogoBytes());
+  drawPaperAndFrame(page);
+  return { pdfDoc, page, fonts, logo };
 }
 
 export async function generateCertificatePdf(
   input: CertificatePdfInput,
 ): Promise<Uint8Array> {
-  const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([842, 595]);
-  const { width, height } = page.getSize();
-
-  const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const timesItalic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
-  const timesBold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
-
-  const logoBytes = await loadLogoBytes();
-  const logo = await pdfDoc.embedPng(logoBytes);
-
-  page.drawRectangle({
-    x: 0,
-    y: 0,
-    width,
-    height,
-    color: BRAND.paper,
-  });
-
-  drawFrame(page);
-
-  const logoH = 44;
-  const logoW = (logo.width / logo.height) * logoH;
-  const wordEdu = "Edu";
-  const wordJarr = "jarr";
-  const brandSize = 22;
-  const brandGap = 10;
-  const brandTotal =
-    logoW +
-    brandGap +
-    helveticaBold.widthOfTextAtSize(wordEdu + wordJarr, brandSize);
-  const brandStartX = (width - brandTotal) / 2;
-  const headerY = height - 78;
-
-  page.drawImage(logo, {
-    x: brandStartX,
-    y: headerY - logoH / 2 + 4,
-    width: logoW,
-    height: logoH,
-  });
-
-  const textX = brandStartX + logoW + brandGap;
-  page.drawText(wordEdu, {
-    x: textX,
-    y: headerY,
-    size: brandSize,
-    font: helveticaBold,
-    color: BRAND.navy,
-  });
-  page.drawText(wordJarr, {
-    x: textX + helveticaBold.widthOfTextAtSize(wordEdu, brandSize),
-    y: headerY,
-    size: brandSize,
-    font: helveticaBold,
-    color: BRAND.teal,
-  });
-
-  const ruleY = headerY - 22;
-  page.drawLine({
-    start: { x: width / 2 - 120, y: ruleY },
-    end: { x: width / 2 + 120, y: ruleY },
-    thickness: 0.75,
-    color: BRAND.rule,
-  });
-
-  const certLabel = "CERTIFICATE OF COMPLETION";
-  const labelSize = 9;
-  const labelWidth = helveticaBold.widthOfTextAtSize(certLabel, labelSize);
-  page.drawText(certLabel, {
-    x: (width - labelWidth) / 2,
-    y: ruleY - 18,
-    size: labelSize,
-    font: helveticaBold,
-    color: BRAND.navy,
-    opacity: 0.75,
-  });
-
-  const diamondY = ruleY - 34;
-  page.drawLine({
-    start: { x: width / 2 - 56, y: diamondY },
-    end: { x: width / 2 - 8, y: diamondY },
-    thickness: 0.75,
-    color: BRAND.rule,
-  });
-  page.drawLine({
-    start: { x: width / 2 + 8, y: diamondY },
-    end: { x: width / 2 + 56, y: diamondY },
-    thickness: 0.75,
-    color: BRAND.rule,
-  });
-  page.drawLine({
-    start: { x: width / 2, y: diamondY + 4 },
-    end: { x: width / 2 + 4, y: diamondY },
-    thickness: 1,
-    color: BRAND.teal,
-    opacity: 0.45,
-  });
-  page.drawLine({
-    start: { x: width / 2 + 4, y: diamondY },
-    end: { x: width / 2, y: diamondY - 4 },
-    thickness: 1,
-    color: BRAND.teal,
-    opacity: 0.45,
-  });
-  page.drawLine({
-    start: { x: width / 2, y: diamondY - 4 },
-    end: { x: width / 2 - 4, y: diamondY },
-    thickness: 1,
-    color: BRAND.teal,
-    opacity: 0.45,
-  });
-  page.drawLine({
-    start: { x: width / 2 - 4, y: diamondY },
-    end: { x: width / 2, y: diamondY + 4 },
-    thickness: 1,
-    color: BRAND.teal,
-    opacity: 0.45,
-  });
-
-  const presented = "Presented to";
-  const presentedWidth = timesItalic.widthOfTextAtSize(presented, 13);
-  page.drawText(presented, {
-    x: (width - presentedWidth) / 2,
-    y: height - 200,
-    size: 13,
-    font: timesItalic,
-    color: BRAND.muted,
-  });
-
-  const nameLines = wrapText(input.studentName, timesBold, 30, width - 200);
-  let y = height - 238;
-  y = drawCenteredLines(page, nameLines, y, timesBold, 30, BRAND.navy, 36);
-
-  const underlineY = y - 6;
-  page.drawLine({
-    start: { x: width / 2 - 100, y: underlineY },
-    end: { x: width / 2 + 100, y: underlineY },
-    thickness: 0.5,
-    color: BRAND.navy,
-    opacity: 0.2,
-  });
-  page.drawLine({
-    start: { x: width / 2 - 72, y: underlineY - 4 },
-    end: { x: width / 2 + 72, y: underlineY - 4 },
-    thickness: 0.5,
-    color: BRAND.teal,
-    opacity: 0.35,
-  });
-
-  const completed = "for successfully completing";
-  const completedWidth = timesItalic.widthOfTextAtSize(completed, 13);
-  page.drawText(completed, {
-    x: (width - completedWidth) / 2,
-    y: underlineY - 28,
-    size: 13,
-    font: timesItalic,
-    color: BRAND.muted,
-  });
-
-  const courseLines = wrapText(
-    input.courseTitle,
-    helveticaBold,
-    18,
-    width - 180,
-  );
-  y = drawCenteredLines(
-    page,
-    courseLines,
-    underlineY - 52,
-    helveticaBold,
-    18,
-    BRAND.ink,
-    24,
-  );
-
-  if (input.category) {
-    const cat = input.category.toUpperCase();
-    const catWidth = helvetica.widthOfTextAtSize(cat, 8);
-    page.drawText(cat, {
-      x: (width - catWidth) / 2,
-      y: y - 6,
-      size: 8,
-      font: helvetica,
-      color: BRAND.teal,
-    });
-  }
-
+  const { pdfDoc, page, fonts, logo } = await createLandscapeDoc();
   const issued = input.issuedAt.toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
     year: "numeric",
   });
 
-  const footerY = 88;
-  const colW = 200;
-  const leftX = width / 2 - colW - 40;
-  const rightX = width / 2 + 40;
-
-  page.drawLine({
-    start: { x: leftX, y: footerY + 28 },
-    end: { x: leftX + colW, y: footerY + 28 },
-    thickness: 0.75,
-    color: BRAND.rule,
-  });
-  page.drawText(input.instructorName, {
-    x: leftX,
-    y: footerY + 12,
-    size: 10,
-    font: helveticaBold,
-    color: BRAND.ink,
-  });
-  page.drawText("Course instructor", {
-    x: leftX,
-    y: footerY,
-    size: 8,
-    font: helvetica,
-    color: BRAND.muted,
+  drawCertificateLayout(page, logo, fonts, {
+    label: "CERTIFICATE OF COMPLETION",
+    studentName: input.studentName,
+    presentedLine: "This certifies that",
+    completingLine: "has successfully completed",
+    title: input.courseTitle,
+    subtitle: input.category ?? null,
+    leftName: input.instructorName,
+    leftRole: "Course instructor",
+    rightName: issued,
+    rightRole: "Date issued",
+    credentialId: input.credentialId,
   });
 
-  page.drawLine({
-    start: { x: rightX, y: footerY + 28 },
-    end: { x: rightX + colW, y: footerY + 28 },
-    thickness: 0.75,
-    color: BRAND.rule,
-  });
-  page.drawText(issued, {
-    x: rightX,
-    y: footerY + 12,
-    size: 10,
-    font: helveticaBold,
-    color: BRAND.ink,
-  });
-  page.drawText("Date issued", {
-    x: rightX,
-    y: footerY,
-    size: 8,
-    font: helvetica,
-    color: BRAND.muted,
-  });
+  return pdfDoc.save();
+}
 
-  const sealSize = 52;
-  const sealX = width / 2;
-  const sealY = footerY + 14;
-  page.drawCircle({
-    x: sealX,
-    y: sealY,
-    size: sealSize / 2,
-    borderColor: BRAND.teal,
-    borderWidth: 1.5,
-    borderOpacity: 0.5,
-    color: BRAND.white,
+export async function generateRoadmapCertificatePdf(
+  input: RoadmapCertificatePdfInput,
+): Promise<Uint8Array> {
+  const { pdfDoc, page, fonts, logo } = await createLandscapeDoc();
+  const issued = input.issuedAt.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
   });
-  const sealLogoH = 28;
-  const sealLogoW = (logo.width / logo.height) * sealLogoH;
-  page.drawImage(logo, {
-    x: sealX - sealLogoW / 2,
-    y: sealY - sealLogoH / 2,
-    width: sealLogoW,
-    height: sealLogoH,
-  });
+  const meta = `${input.courseCount} course${input.courseCount === 1 ? "" : "s"} completed${
+    input.category ? ` · ${input.category}` : ""
+  }`;
 
-  const verified = "VERIFIED";
-  const verifiedWidth = helvetica.widthOfTextAtSize(verified, 7);
-  page.drawText(verified, {
-    x: (width - verifiedWidth) / 2,
-    y: footerY - 14,
-    size: 7,
-    font: helvetica,
-    color: BRAND.muted,
-  });
-
-  const credWidth = helvetica.widthOfTextAtSize(input.credentialId, 8);
-  page.drawText(input.credentialId, {
-    x: (width - credWidth) / 2,
-    y: 52,
-    size: 8,
-    font: helvetica,
-    color: BRAND.muted,
-    opacity: 0.85,
+  drawCertificateLayout(page, logo, fonts, {
+    label: "ROADMAP COMPLETION CERTIFICATE",
+    studentName: input.studentName,
+    presentedLine: "This certifies that",
+    completingLine: "has successfully completed the learning path",
+    title: input.roadmapTitle,
+    subtitle: meta,
+    leftName: "Edujarr",
+    leftRole: "Learning path",
+    rightName: issued,
+    rightRole: "Date issued",
+    credentialId: input.credentialId,
   });
 
   return pdfDoc.save();
@@ -457,201 +579,6 @@ export function certificatePdfFilename(courseTitle: string) {
   return `${slug || "course"}-certificate.pdf`;
 }
 
-export type RoadmapCertificatePdfInput = {
-  studentName: string;
-  roadmapTitle: string;
-  courseCount: number;
-  category?: string | null;
-  credentialId: string;
-  issuedAt: Date;
-};
-
-export async function generateRoadmapCertificatePdf(
-  input: RoadmapCertificatePdfInput,
-): Promise<Uint8Array> {
-  const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([842, 595]);
-  const { width, height } = page.getSize();
-
-  const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const timesItalic = await pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
-  const timesBold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
-  const logo = await pdfDoc.embedPng(await loadLogoBytes());
-
-  page.drawRectangle({
-    x: 0,
-    y: 0,
-    width,
-    height,
-    color: BRAND.paper,
-  });
-  drawFrame(page);
-
-  const logoH = 44;
-  const logoW = (logo.width / logo.height) * logoH;
-  const wordEdu = "Edu";
-  const wordJarr = "jarr";
-  const brandSize = 22;
-  const brandGap = 10;
-  const brandTotal =
-    logoW +
-    brandGap +
-    helveticaBold.widthOfTextAtSize(wordEdu + wordJarr, brandSize);
-  const brandStartX = (width - brandTotal) / 2;
-  const headerY = height - 78;
-
-  page.drawImage(logo, {
-    x: brandStartX,
-    y: headerY - logoH / 2 + 4,
-    width: logoW,
-    height: logoH,
-  });
-
-  const textX = brandStartX + logoW + brandGap;
-  page.drawText(wordEdu, {
-    x: textX,
-    y: headerY,
-    size: brandSize,
-    font: helveticaBold,
-    color: BRAND.navy,
-  });
-  page.drawText(wordJarr, {
-    x: textX + helveticaBold.widthOfTextAtSize(wordEdu, brandSize),
-    y: headerY,
-    size: brandSize,
-    font: helveticaBold,
-    color: BRAND.teal,
-  });
-
-  const ruleY = headerY - 22;
-  page.drawLine({
-    start: { x: width / 2 - 120, y: ruleY },
-    end: { x: width / 2 + 120, y: ruleY },
-    thickness: 0.75,
-    color: BRAND.rule,
-  });
-
-  const certLabel = "ROADMAP COMPLETION CERTIFICATE";
-  const labelWidth = helveticaBold.widthOfTextAtSize(certLabel, 9);
-  page.drawText(certLabel, {
-    x: (width - labelWidth) / 2,
-    y: ruleY - 18,
-    size: 9,
-    font: helveticaBold,
-    color: BRAND.navy,
-    opacity: 0.75,
-  });
-
-  const presented = "Presented to";
-  const presentedWidth = timesItalic.widthOfTextAtSize(presented, 13);
-  page.drawText(presented, {
-    x: (width - presentedWidth) / 2,
-    y: height - 200,
-    size: 13,
-    font: timesItalic,
-    color: BRAND.muted,
-  });
-
-  const nameLines = wrapText(input.studentName, timesBold, 30, width - 200);
-  let y = height - 238;
-  y = drawCenteredLines(page, nameLines, y, timesBold, 30, BRAND.navy, 36);
-
-  const completed = "for completing the learning roadmap";
-  const completedWidth = timesItalic.widthOfTextAtSize(completed, 13);
-  page.drawText(completed, {
-    x: (width - completedWidth) / 2,
-    y: y - 20,
-    size: 13,
-    font: timesItalic,
-    color: BRAND.muted,
-  });
-
-  const titleLines = wrapText(
-    input.roadmapTitle,
-    helveticaBold,
-    18,
-    width - 180,
-  );
-  y = drawCenteredLines(
-    page,
-    titleLines,
-    y - 48,
-    helveticaBold,
-    18,
-    BRAND.ink,
-    24,
-  );
-
-  const meta = `${input.courseCount} course${input.courseCount === 1 ? "" : "s"} completed${
-    input.category ? ` · ${input.category}` : ""
-  }`;
-  const metaWidth = helvetica.widthOfTextAtSize(meta, 10);
-  page.drawText(meta, {
-    x: (width - metaWidth) / 2,
-    y: y - 10,
-    size: 10,
-    font: helvetica,
-    color: BRAND.teal,
-  });
-
-  const issued = input.issuedAt.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-
-  const footerY = 88;
-  page.drawLine({
-    start: { x: width / 2 - 100, y: footerY + 28 },
-    end: { x: width / 2 + 100, y: footerY + 28 },
-    thickness: 0.75,
-    color: BRAND.rule,
-  });
-  const dateLabel = `Issued ${issued}`;
-  const dateWidth = helveticaBold.widthOfTextAtSize(dateLabel, 10);
-  page.drawText(dateLabel, {
-    x: (width - dateWidth) / 2,
-    y: footerY + 12,
-    size: 10,
-    font: helveticaBold,
-    color: BRAND.ink,
-  });
-
-  const sealSize = 52;
-  const sealX = width / 2;
-  const sealY = footerY + 70;
-  page.drawCircle({
-    x: sealX,
-    y: sealY,
-    size: sealSize / 2,
-    borderColor: BRAND.teal,
-    borderWidth: 1.5,
-    borderOpacity: 0.5,
-    color: BRAND.white,
-  });
-  const sealLogoH = 28;
-  const sealLogoW = (logo.width / logo.height) * sealLogoH;
-  page.drawImage(logo, {
-    x: sealX - sealLogoW / 2,
-    y: sealY - sealLogoH / 2,
-    width: sealLogoW,
-    height: sealLogoH,
-  });
-
-  const credWidth = helvetica.widthOfTextAtSize(input.credentialId, 8);
-  page.drawText(input.credentialId, {
-    x: (width - credWidth) / 2,
-    y: 52,
-    size: 8,
-    font: helvetica,
-    color: BRAND.muted,
-    opacity: 0.85,
-  });
-
-  return pdfDoc.save();
-}
-
 export function roadmapCertificatePdfFilename(roadmapTitle: string) {
   const slug = roadmapTitle
     .toLowerCase()
@@ -659,4 +586,3 @@ export function roadmapCertificatePdfFilename(roadmapTitle: string) {
     .replace(/^-|-$/g, "");
   return `${slug || "roadmap"}-certificate.pdf`;
 }
-

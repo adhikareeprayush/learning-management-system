@@ -5,7 +5,7 @@ import { PrismaClient } from "@prisma/client";
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
   pgPool?: Pool;
-  prismaFingerprint?: string;
+  databaseUrl?: string;
 };
 
 const REQUIRED_DELEGATES = [
@@ -19,31 +19,22 @@ const REQUIRED_DELEGATES = [
   "paymentMethod",
   "newsletterSubscriber",
   "newsletterCampaign",
+  "organization",
 ] as const;
 
-function createPrismaClient() {
-  const connectionString = process.env.DATABASE_URL;
-
-  if (!connectionString) {
-    throw new Error("DATABASE_URL is not set");
-  }
-
-  // Prefer a shared Pool with IPv4 — Supabase AAAA records are often unreachable
-  // on local networks and cause EHOSTUNREACH refresh storms.
-  const pool =
-    globalForPrisma.pgPool ??
-    new Pool({
-      connectionString,
-      max: 10,
-      connectionTimeoutMillis: 10_000,
-    } as ConstructorParameters<typeof Pool>[0]);
+function createPrismaClient(connectionString: string) {
+  const pool = new Pool({
+    connectionString,
+    max: 10,
+    connectionTimeoutMillis: 10_000,
+  });
 
   if (process.env.NODE_ENV !== "production") {
     globalForPrisma.pgPool = pool;
+    globalForPrisma.databaseUrl = connectionString;
   }
 
-  const adapter = new PrismaPg(pool);
-  return new PrismaClient({ adapter });
+  return new PrismaClient({ adapter: new PrismaPg(pool) });
 }
 
 function missingDelegates(client: PrismaClient) {
@@ -57,46 +48,51 @@ function missingDelegates(client: PrismaClient) {
   });
 }
 
-function clientFingerprint(client: PrismaClient) {
-  return REQUIRED_DELEGATES.map((key) =>
-    (client as unknown as Record<string, unknown>)[key] ? "1" : "0",
-  ).join("");
+function disposeCached() {
+  const client = globalForPrisma.prisma;
+  const pool = globalForPrisma.pgPool;
+  globalForPrisma.prisma = undefined;
+  globalForPrisma.pgPool = undefined;
+  globalForPrisma.databaseUrl = undefined;
+  if (client) void client.$disconnect().catch(() => undefined);
+  if (pool) void pool.end().catch(() => undefined);
 }
 
-/** Dev hot-reload can keep an old PrismaClient missing newer models — recreate if needed. */
+/** Recreate client when models are stale or DATABASE_URL changed. */
 function getPrismaClient() {
-  const cached = globalForPrisma.prisma;
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error("DATABASE_URL is not set");
+  }
 
-  if (cached && missingDelegates(cached).length === 0) {
+  const cached = globalForPrisma.prisma;
+  const urlChanged = globalForPrisma.databaseUrl !== connectionString;
+
+  if (cached && !urlChanged && missingDelegates(cached).length === 0) {
     return cached;
   }
 
-  if (cached) {
-    void cached.$disconnect().catch(() => undefined);
-    globalForPrisma.prisma = undefined;
+  if (cached || globalForPrisma.pgPool) {
+    disposeCached();
   }
 
-  const client = createPrismaClient();
+  const client = createPrismaClient(connectionString);
   const missing = missingDelegates(client);
 
   if (missing.length > 0) {
     throw new Error(
-      `PrismaClient is missing models: ${missing.join(", ")}. Run \`pnpm db:generate\` and fully restart the Next.js dev server (Turbopack HMR cannot pick up a regenerated Prisma client).`,
+      `PrismaClient is missing models: ${missing.join(", ")}. Run \`pnpm db:generate\` and fully restart the Next.js dev server.`,
     );
   }
 
   if (process.env.NODE_ENV !== "production") {
     globalForPrisma.prisma = client;
-    globalForPrisma.prismaFingerprint = clientFingerprint(client);
   }
 
   return client;
 }
 
-/**
- * Lazy proxy so Turbopack HMR never keeps a stale PrismaClient export.
- * Every property access resolves against a validated client.
- */
+/** Lazy proxy so HMR does not keep a stale PrismaClient. */
 export const prisma = new Proxy({} as PrismaClient, {
   get(_target, prop, _receiver) {
     const client = getPrismaClient();

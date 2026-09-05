@@ -34,6 +34,86 @@ type RoadmapCertificateItem = {
 
 type CertificateItem = CourseCertificateItem | RoadmapCertificateItem;
 
+function slugFilename(title: string) {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `${slug || "course"}-certificate.pdf`;
+}
+
+async function downloadFromServer(cert: CertificateItem, filename: string) {
+  const urlPath =
+    cert.kind === "roadmap"
+      ? `/api/student/certificates/roadmap/${cert.id}/pdf`
+      : `/api/student/certificates/${cert.id}/pdf`;
+  const response = await fetch(`${urlPath}?t=${Date.now()}`, {
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
+    throw new Error(
+      data.error || `Download failed (${response.status}). Restart the dev server and try again.`,
+    );
+  }
+  const blob = await response.blob();
+  if (!blob.size || blob.type.includes("json")) {
+    throw new Error("Server returned an empty certificate file.");
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+/** Capture the on-screen thumbnail so the PDF matches what you see. */
+async function downloadFromPreview(root: HTMLElement, filename: string) {
+  const html2canvas = (await import("html2canvas")).default;
+  const { jsPDF } = await import("jspdf");
+
+  const canvas = await html2canvas(root, {
+    scale: 3,
+    useCORS: true,
+    allowTaint: true,
+    backgroundColor: "#F7F6F3",
+    logging: false,
+    // Avoid cloning issues with modern color functions
+    onclone: (doc) => {
+      doc.querySelectorAll<HTMLElement>("[data-certificate-root] *").forEach((el) => {
+        const style = doc.defaultView?.getComputedStyle(el);
+        if (!style) return;
+        // Force hex-friendly colors for html2canvas
+        if (style.color) el.style.color = style.color;
+        if (style.backgroundColor && style.backgroundColor !== "rgba(0, 0, 0, 0)") {
+          el.style.backgroundColor = style.backgroundColor;
+        }
+      });
+    },
+  });
+
+  if (!canvas.width || !canvas.height) {
+    throw new Error("Could not render certificate preview.");
+  }
+
+  const img = canvas.toDataURL("image/jpeg", 0.95);
+  const pdf = new jsPDF({
+    orientation: "landscape",
+    unit: "pt",
+    format: "a4",
+    compress: true,
+  });
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  pdf.addImage(img, "JPEG", 0, 0, pageW, pageH);
+  pdf.save(filename);
+}
+
 export function CertificatesWorkspace({
   studentName,
   certificates,
@@ -47,41 +127,33 @@ export function CertificatesWorkspace({
   async function downloadPdf(cert: CertificateItem) {
     setDownloadingId(cert.id);
     setFlash(null);
+    const title =
+      cert.kind === "roadmap" ? cert.roadmap.title : cert.course.title;
+    const filename = slugFilename(title);
+
+    const preview = document.querySelector<HTMLElement>(
+      `[data-certificate-id="${cert.id}"]`,
+    );
+
     try {
-      const urlPath =
-        cert.kind === "roadmap"
-          ? `/api/student/certificates/roadmap/${cert.id}/pdf`
-          : `/api/student/certificates/${cert.id}/pdf`;
-      const response = await fetch(urlPath);
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(data.error ?? "Could not download certificate.");
-      }
-
-      const blob = await response.blob();
-      const disposition = response.headers.get("Content-Disposition") ?? "";
-      const match = disposition.match(/filename="([^"]+)"/);
-      const title =
-        cert.kind === "roadmap" ? cert.roadmap.title : cert.course.title;
-      const filename =
-        match?.[1] ??
-        `${title.toLowerCase().replace(/\s+/g, "-")}-certificate.pdf`;
-
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = filename;
-      anchor.click();
-      URL.revokeObjectURL(objectUrl);
+      // Server PDF (pdf-lib) — reliable; includes full footer
+      await downloadFromServer(cert, filename);
       setFlash(`Downloaded PDF certificate for “${title}”.`);
-    } catch (error) {
-      setFlash(
-        error instanceof Error
-          ? error.message
-          : "Could not download certificate.",
-      );
+    } catch (serverError) {
+      try {
+        // Fallback: snapshot the on-screen certificate card
+        if (!preview) throw serverError;
+        await downloadFromPreview(preview, filename);
+        setFlash(`Downloaded PDF certificate for “${title}”.`);
+      } catch (fallbackError) {
+        const message =
+          serverError instanceof Error
+            ? serverError.message
+            : fallbackError instanceof Error
+              ? fallbackError.message
+              : "Could not download certificate.";
+        setFlash(message);
+      }
     } finally {
       setDownloadingId(null);
     }
@@ -110,10 +182,11 @@ export function CertificatesWorkspace({
           {certificates.map((cert) => (
             <article
               key={`${cert.kind}-${cert.id}`}
-              className="overflow-hidden rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]"
+              className="rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]"
             >
               {cert.kind === "course" ? (
                 <CertificatePreview
+                  data-certificate-id={cert.id}
                   studentName={studentName}
                   courseTitle={cert.course.title}
                   instructorName={cert.course.instructor.name}
@@ -123,6 +196,7 @@ export function CertificatesWorkspace({
                 />
               ) : (
                 <CertificatePreview
+                  data-certificate-id={cert.id}
                   studentName={studentName}
                   courseTitle={cert.roadmap.title}
                   instructorName={`Roadmap · ${cert.roadmap.courseCount} courses`}
