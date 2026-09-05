@@ -21,7 +21,7 @@ type SessionUser = {
 };
 
 function roleToDashboardRole(role: string | undefined): DashboardRole {
-  if (role === "ADMIN") return "admin";
+  if (role === "ADMIN" || role === "ORG_ADMIN") return "admin";
   if (role === "INSTRUCTOR") return "instructor";
   return "student";
 }
