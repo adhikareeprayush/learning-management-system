@@ -37,14 +37,24 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
+function normalizeLesson(lesson: AuthoringLesson): AuthoringLesson {
+  return {
+    ...lesson,
+    summary: lesson.summary ?? "",
+    content: lesson.content ?? "",
+    videoUrl: lesson.videoUrl ?? "",
+  };
+}
+
 export function LessonList({ course, initialModules, initialLessons }: LessonListProps) {
   const [modules, setModules] = useState(initialModules);
-  const [lessons, setLessons] = useState(initialLessons);
+  const [lessons, setLessons] = useState(() => initialLessons.map(normalizeLesson));
   const [newModuleTitle, setNewModuleTitle] = useState("");
   const [newLessonTitle, setNewLessonTitle] = useState("");
   const [newLessonModuleId, setNewLessonModuleId] = useState(initialModules[0]?.id ?? "");
   const [expanded, setExpanded] = useState<string | null>(initialLessons[0]?.id ?? null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [videoUpload, setVideoUpload] = useState<{ lessonId: string; percent: number } | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -124,12 +134,7 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: newLessonTitle, moduleId: newLessonModuleId || null }),
       });
-      const added = {
-        ...data.lesson,
-        summary: data.lesson.summary ?? "",
-        content: data.lesson.content ?? "",
-        videoUrl: data.lesson.videoUrl ?? "",
-      };
+      const added = normalizeLesson(data.lesson);
       setLessons((current) => [...current, added]);
       setNewLessonTitle("");
       setExpanded(added.id);
@@ -150,7 +155,7 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(lesson),
       });
-      updateLesson(lesson.id, data.lesson);
+      updateLesson(lesson.id, normalizeLesson(data.lesson));
       setFlash(`Lesson “${lesson.title}” saved.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not save lesson");
@@ -161,25 +166,96 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
 
   async function uploadVideo(lesson: AuthoringLesson, file: File) {
     setBusy(`video-${lesson.id}`);
+    setVideoUpload({ lessonId: lesson.id, percent: 0 });
     setError(null);
     try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("provider", "youtube");
-      form.set("title", `${course.title} — ${lesson.title}`);
-      form.set("description", lesson.summary || `Lesson from ${course.title}`);
-      const uploaded = await api<{ upload: { url: string } }>("/api/upload", { method: "POST", body: form });
-      const saved = await api<{ lesson: AuthoringLesson }>(`/api/lessons/${lesson.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoUrl: uploaded.upload.url }),
+      const providers = await api<{
+        providers: { youtube?: boolean };
+      }>("/api/upload");
+      if (!providers.providers.youtube) {
+        throw new Error(
+          "YouTube is not configured on the server. Add YOUTUBE_* env vars and run pnpm youtube:setup (Production OAuth consent).",
+        );
+      }
+
+      const title = `${course.title} — ${lesson.title}`;
+      const description = lesson.summary || `Lesson from ${course.title}`;
+      const session = await api<{ uploadUrl: string }>(
+        "/api/upload/youtube/session",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title,
+            description,
+            contentType: file.type || "video/mp4",
+            contentLength: file.size,
+          }),
+        },
+      );
+
+      const uploaded = await new Promise<{
+        id: string;
+        snippet?: { title?: string; thumbnails?: { high?: { url?: string } } };
+      }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", session.uploadUrl);
+        xhr.setRequestHeader(
+          "Content-Type",
+          file.type || "application/octet-stream",
+        );
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          setVideoUpload({
+            lessonId: lesson.id,
+            percent: Math.min(99, Math.round((event.loaded / event.total) * 100)),
+          });
+        };
+        xhr.onload = () => {
+          if (xhr.status < 200 || xhr.status >= 300) {
+            reject(
+              new Error(
+                `YouTube upload failed (${xhr.status}). Check the channel quota and OAuth scopes.`,
+              ),
+            );
+            return;
+          }
+          try {
+            resolve(JSON.parse(xhr.responseText || "{}"));
+          } catch {
+            reject(new Error("Invalid response from YouTube"));
+          }
+        };
+        xhr.onerror = () =>
+          reject(
+            new Error(
+              "Could not reach YouTube. If this happens in production, confirm the OAuth client is in Production mode.",
+            ),
+          );
+        xhr.send(file);
       });
-      updateLesson(lesson.id, saved.lesson);
-      setFlash(`Video uploaded and attached to “${lesson.title}”.`);
+
+      if (!uploaded.id) {
+        throw new Error("YouTube did not return a video id");
+      }
+
+      const videoUrl = `https://www.youtube.com/watch?v=${uploaded.id}`;
+      setVideoUpload({ lessonId: lesson.id, percent: 99 });
+      const saved = await api<{ lesson: AuthoringLesson }>(
+        `/api/lessons/${lesson.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ videoUrl }),
+        },
+      );
+      updateLesson(lesson.id, normalizeLesson(saved.lesson));
+      setFlash(`Video uploaded to YouTube and attached to “${lesson.title}”.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not upload video");
     } finally {
       setBusy(null);
+      setVideoUpload(null);
     }
   }
 
@@ -265,11 +341,26 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
                         <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Title</span><input value={lesson.title} onChange={(event) => updateLesson(lesson.id, { title: event.target.value })} className="w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
                         <label className="block"><span className="mb-1 block text-xs font-semibold text-muted">Module</span><select value={lesson.moduleId ?? ""} onChange={(event) => updateLesson(lesson.id, { moduleId: event.target.value || null })} className="w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20"><option value="">No module</option>{modules.map((courseModule) => <option key={courseModule.id} value={courseModule.id}>{courseModule.title}</option>)}</select></label>
                         <label className="block"><span className="mb-1 block text-xs font-semibold text-muted">Duration (minutes)</span><input type="number" min="0" value={lesson.duration} onChange={(event) => updateLesson(lesson.id, { duration: Number(event.target.value) })} className="w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
-                        <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Summary</span><textarea value={lesson.summary} onChange={(event) => updateLesson(lesson.id, { summary: event.target.value })} className="min-h-20 w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
-                        <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Written lesson content</span><textarea value={lesson.content} onChange={(event) => updateLesson(lesson.id, { content: event.target.value })} className="min-h-40 w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
+                        <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Summary</span><textarea value={lesson.summary ?? ""} onChange={(event) => updateLesson(lesson.id, { summary: event.target.value })} className="min-h-20 w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
+                        <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Written lesson content</span><textarea value={lesson.content ?? ""} onChange={(event) => updateLesson(lesson.id, { content: event.target.value })} className="min-h-40 w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
                         <div className="rounded-xl border border-black/8 p-3 lg:col-span-2">
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="flex items-center gap-2 text-sm font-semibold text-brand-navy"><Film className="size-4" /> Lesson video</p><p className="mt-1 truncate text-xs text-muted">{lesson.videoUrl || "Upload a video to the configured YouTube channel as unlisted."}</p></div><label className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-black/10 px-3 py-2 text-xs font-semibold text-brand-navy hover:bg-surface ${busy !== null ? "pointer-events-none opacity-50" : ""}`}><Upload className="size-3.5" /> {busy === `video-${lesson.id}` ? "Uploading…" : "Upload video"}<input type="file" accept="video/*" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadVideo(lesson, file); event.currentTarget.value = ""; }} /></label></div>
-                          <input value={lesson.videoUrl} onChange={(event) => updateLesson(lesson.id, { videoUrl: event.target.value })} placeholder="Or paste an existing YouTube URL" className="mt-3 w-full rounded-lg border border-black/8 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-purple/20" />
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="flex items-center gap-2 text-sm font-semibold text-brand-navy"><Film className="size-4" /> Lesson video</p><p className="mt-1 truncate text-xs text-muted">{lesson.videoUrl || "Upload a video to the configured YouTube channel as unlisted."}</p></div><label className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-black/10 px-3 py-2 text-xs font-semibold text-brand-navy hover:bg-surface ${busy !== null ? "pointer-events-none opacity-50" : ""}`}><Upload className="size-3.5" /> {videoUpload?.lessonId === lesson.id ? `Uploading ${videoUpload.percent}%` : busy === `video-${lesson.id}` ? "Finishing…" : "Upload video"}<input type="file" accept="video/*" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadVideo(lesson, file); event.currentTarget.value = ""; }} /></label></div>
+                          {videoUpload?.lessonId === lesson.id ? (
+                            <div className="mt-3 space-y-1">
+                              <div className="h-2 overflow-hidden rounded-full bg-surface">
+                                <div
+                                  className="h-full rounded-full bg-brand-purple transition-[width] duration-200"
+                                  style={{ width: `${videoUpload.percent}%` }}
+                                />
+                              </div>
+                              <p className="text-xs text-muted">
+                                {videoUpload.percent >= 99
+                                  ? "Publishing to YouTube…"
+                                  : `Uploading video… ${videoUpload.percent}%`}
+                              </p>
+                            </div>
+                          ) : null}
+                          <input value={lesson.videoUrl ?? ""} onChange={(event) => updateLesson(lesson.id, { videoUrl: event.target.value })} placeholder="Or paste an existing YouTube URL" className="mt-3 w-full rounded-lg border border-black/8 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-purple/20" />
                         </div>
                         <label className="flex items-center gap-2 text-sm font-medium text-brand-navy"><input type="checkbox" checked={lesson.isFree} onChange={(event) => updateLesson(lesson.id, { isFree: event.target.checked })} className="size-4 accent-brand-purple" /> Allow free preview</label>
                         <LessonResourceManager lessonId={lesson.id} />

@@ -2,5 +2,24 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm vercel-build"
+  "buildCommand": "pnpm vercel-build",
+  "functions": {
+    "src/app/api/upload/youtube/session/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/upload/route.ts": {
+      "maxDuration": 60
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        }
+      ]
+    }
+  ]
 }
