@@ -46,7 +46,7 @@ type ProfileEditorProps = {
 };
 
 function roleLabel(role: string) {
-  if (role === "ADMIN") return "Super Admin";
+  if (role === "ADMIN") return "Admin";
   if (role === "INSTRUCTOR") return "Instructor";
   return "Student";
 }

@@ -30,10 +30,10 @@ export function Sidebar() {
         initials: getInitials(sessionUser.name),
         plan:
           sessionUser.role === "ADMIN"
-            ? "Super Admin"
+            ? "Admin"
             : sessionUser.role === "INSTRUCTOR"
-              ? "Creator"
-              : "Pro",
+              ? "Instructor"
+              : "Student",
       }
     : { name: fallback.name, image: null, initials: fallback.initials, plan: fallback.plan };
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -125,7 +125,7 @@ export function Sidebar() {
                   {profile.name}
                 </p>
                 <p className="truncate text-xs capitalize text-muted">
-                  {role === "admin" ? "Super Admin" : role} · {profile.plan}
+                  {role} · {profile.plan}
                 </p>
               </div>
             ) : (
@@ -134,7 +134,7 @@ export function Sidebar() {
                   {profile.name}
                 </p>
                 <p className="truncate text-xs capitalize text-muted">
-                  {role === "admin" ? "Super Admin" : role} · {profile.plan}
+                  {role} · {profile.plan}
                 </p>
               </div>
             )}

@@ -39,7 +39,7 @@ export function AdminDashboardView({
   return (
     <div className="space-y-6 sm:space-y-8">
       <DashboardHeader
-        title={`Super Admin · ${userName.split(" ")[0]}`}
+        title={`Admin · ${userName.split(" ")[0]}`}
         subtitle="Platform health, growth, and moderation."
         status={
           <LiveIndicator refreshedAt={refreshedAt} refreshing={refreshing} />

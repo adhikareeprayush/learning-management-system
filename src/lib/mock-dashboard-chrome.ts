@@ -20,7 +20,7 @@ export const roleProfiles: Record<
     name: "Sam Admin",
     initials: "SA",
     email: "sam@edujarr.com",
-    plan: "Super Admin",
+    plan: "Admin",
   },
 };
 
