@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { CourseReviews } from "@/components/course/course-reviews";
 import { EnrollButton } from "@/components/course/enroll-button";
 import { getServerSession } from "@/lib/auth";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
 import { prisma } from "@/lib/db";
 import { getLatestPaymentForCourse } from "@/lib/payments";
 import {
@@ -46,9 +47,12 @@ type Props = { params: Promise<{ courseId: string }> };
 export default async function CourseDetailPage({ params }: Props) {
   const { courseId } = await params;
   const session = await getServerSession();
+  const ctx = await resolveTenantFromHeaders();
+  if (!ctx) notFound();
 
   const course = await prisma.course.findFirst({
     where: {
+      organizationId: ctx.organizationId,
       status: "PUBLISHED",
       OR: [{ id: courseId }, { slug: courseId }],
     },
@@ -73,6 +77,7 @@ export default async function CourseDetailPage({ params }: Props) {
 
   const related = await prisma.course.findMany({
     where: {
+      organizationId: ctx.organizationId,
       status: "PUBLISHED",
       category: course.category,
       NOT: { id: course.id },

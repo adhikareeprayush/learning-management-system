@@ -2,9 +2,13 @@ import Link from "next/link";
 import { GraduationCap } from "lucide-react";
 import { PageHero } from "@/components/layout/page-hero";
 import { getInstructorsFromDb } from "@/lib/dashboard-data";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
 
 export default async function InstructorsPage() {
-  const instructors = await getInstructorsFromDb();
+  const ctx = await resolveTenantFromHeaders();
+  const instructors = ctx
+    ? await getInstructorsFromDb(ctx.organizationId)
+    : [];
 
   return (
     <div className="bg-white pb-20">
@@ -15,7 +19,7 @@ export default async function InstructorsPage() {
             Our <span className="text-brand-mint">instructors</span>
           </>
         }
-        description="Instructors from the seeded catalog — Jane teaches the web track."
+        description="Meet the instructors at this institute."
         icon={GraduationCap}
       />
       <div className="mx-auto grid max-w-[1440px] gap-6 px-5 py-14 sm:grid-cols-2 lg:grid-cols-4 md:px-10 lg:px-16">

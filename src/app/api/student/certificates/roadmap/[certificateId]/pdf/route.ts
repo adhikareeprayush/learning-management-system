@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { jsonError, requireSession } from "@/lib/api";
+import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import {
   generateRoadmapCertificatePdf,
   roadmapCertificatePdfFilename,
@@ -10,6 +10,9 @@ type Params = { params: Promise<{ certificateId: string }> };
 export const runtime = "nodejs";
 
 export async function GET(_request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
 
@@ -19,6 +22,7 @@ export async function GET(_request: Request, { params }: Params) {
     where: {
       id: certificateId,
       studentId: session.user.id,
+      roadmap: { organizationId: tenant.organizationId },
     },
     include: {
       student: { select: { name: true } },

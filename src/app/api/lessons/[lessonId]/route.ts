@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { cleanString, finiteNumber, isTeacher, jsonError } from "@/lib/api";
+import { cleanString, finiteNumber, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import { findManagedCourse, syncCourseDuration } from "@/lib/course-access";
 import { maybeIssueCertificate } from "@/lib/certificates";
 
@@ -9,10 +8,11 @@ type Params = { params: Promise<{ lessonId: string }> };
 
 export async function GET(_request: Request, { params }: Params) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const tenant = await requireTenantApi();
+    if (tenant instanceof Response) return tenant;
+
+    const session = await requireSession();
+    if (!session) return jsonError("Unauthorized", 401);
 
     const { lessonId } = await params;
     const lesson = await prisma.lesson.findUnique({
@@ -24,13 +24,14 @@ export async function GET(_request: Request, { params }: Params) {
             slug: true,
             title: true,
             status: true,
+            organizationId: true,
           },
         },
         resources: true,
       },
     });
 
-    if (!lesson) {
+    if (!lesson || lesson.course.organizationId !== tenant.organizationId) {
       return NextResponse.json({ error: "Lesson not found" }, { status: 404 });
     }
 
@@ -44,8 +45,15 @@ export async function GET(_request: Request, { params }: Params) {
     });
 
     const canManage =
-      isTeacher(session) &&
-      Boolean(await findManagedCourse(lesson.courseId, session));
+      isTeacher(session, tenant.member) &&
+      Boolean(
+        await findManagedCourse(
+          lesson.courseId,
+          tenant.organizationId,
+          session,
+          tenant.member,
+        ),
+      );
 
     if (!enrollment && !canManage) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -85,24 +93,38 @@ export async function GET(_request: Request, { params }: Params) {
 
 export async function PATCH(request: Request, { params }: Params) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const tenant = await requireTenantApi();
+    if (tenant instanceof Response) return tenant;
+
+    const session = await requireSession();
+    if (!session) return jsonError("Unauthorized", 401);
+
     const { lessonId } = await params;
     const body = await request.json();
 
     const lesson = await prisma.lesson.findUnique({
       where: { id: lessonId },
-      select: { id: true, courseId: true, moduleId: true },
+      select: {
+        id: true,
+        courseId: true,
+        moduleId: true,
+        course: { select: { organizationId: true } },
+      },
     });
 
-    if (!lesson) {
+    if (!lesson || lesson.course.organizationId !== tenant.organizationId) {
       return NextResponse.json({ error: "Lesson not found" }, { status: 404 });
     }
 
-    if (isTeacher(session)) {
-      if (!(await findManagedCourse(lesson.courseId, session))) {
+    if (isTeacher(session, tenant.member)) {
+      if (
+        !(await findManagedCourse(
+          lesson.courseId,
+          tenant.organizationId,
+          session,
+          tenant.member,
+        ))
+      ) {
         return jsonError("Lesson not found", 404);
       }
       if (body.moduleId) {
@@ -128,7 +150,7 @@ export async function PATCH(request: Request, { params }: Params) {
       return NextResponse.json({ lesson: updated });
     }
 
-    if (session.user.role !== "STUDENT") return jsonError("Forbidden", 403);
+    if (tenant.member?.role !== "STUDENT") return jsonError("Forbidden", 403);
     const completed = Boolean(body.completed);
     const enrollment = await prisma.enrollment.findUnique({
       where: {
@@ -198,12 +220,28 @@ export async function PATCH(request: Request, { params }: Params) {
 }
 
 export async function DELETE(_request: Request, { params }: Params) {
-  const session = await getServerSession();
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
+  const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (!isTeacher(session)) return jsonError("Forbidden", 403);
+  if (!isTeacher(session, tenant.member)) return jsonError("Forbidden", 403);
+
   const { lessonId } = await params;
-  const lesson = await prisma.lesson.findUnique({ where: { id: lessonId } });
-  if (!lesson || !(await findManagedCourse(lesson.courseId, session))) {
+  const lesson = await prisma.lesson.findUnique({
+    where: { id: lessonId },
+    include: { course: { select: { organizationId: true } } },
+  });
+  if (
+    !lesson ||
+    lesson.course.organizationId !== tenant.organizationId ||
+    !(await findManagedCourse(
+      lesson.courseId,
+      tenant.organizationId,
+      session,
+      tenant.member,
+    ))
+  ) {
     return jsonError("Lesson not found", 404);
   }
   await prisma.lesson.delete({ where: { id: lesson.id } });

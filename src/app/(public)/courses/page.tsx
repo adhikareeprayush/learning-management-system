@@ -4,12 +4,30 @@ import { ArrowRight, BookOpen, Sparkles, Users } from "lucide-react";
 import { CoursesCatalog } from "@/components/course/courses-catalog";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
 
 export default async function CoursesPage() {
+  const ctx = await resolveTenantFromHeaders();
+  if (!ctx) {
+    return (
+      <div className="mx-auto max-w-lg px-5 py-20 text-center">
+        <h1 className="font-display text-2xl text-brand-navy">
+          Catalog unavailable
+        </h1>
+        <p className="mt-3 text-muted">
+          Run <code className="rounded bg-surface px-1.5 py-0.5 text-sm">pnpm db:seed</code>{" "}
+          to create the default institute, then refresh.
+        </p>
+      </div>
+    );
+  }
+
+  const orgFilter = { organizationId: ctx.organizationId };
+
   const [total, featured] = await Promise.all([
-    prisma.course.count({ where: { status: "PUBLISHED" } }),
+    prisma.course.count({ where: { status: "PUBLISHED", ...orgFilter } }),
     prisma.course.findMany({
-      where: { status: "PUBLISHED", featured: true },
+      where: { status: "PUBLISHED", featured: true, ...orgFilter },
       take: 3,
       orderBy: { createdAt: "desc" },
       select: {

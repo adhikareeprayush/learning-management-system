@@ -1,41 +1,72 @@
+import type { OrganizationMember } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
   cleanString,
   isTeacher,
   jsonError,
   requireSession,
+  requireTenantApi,
+  type AppSession,
 } from "@/lib/api";
 import { canAccessLesson, findLessonForTeacher } from "@/lib/course-access";
 
 type Params = { params: Promise<{ resourceId: string }> };
 
-async function getResource(resourceId: string) {
-  return prisma.lessonResource.findUnique({
+async function getResource(resourceId: string, organizationId: string) {
+  const resource = await prisma.lessonResource.findUnique({
     where: { id: resourceId },
-    include: { lesson: { select: { id: true, courseId: true } } },
+    include: {
+      lesson: {
+        select: { id: true, courseId: true, course: { select: { organizationId: true } } },
+      },
+    },
   });
+  if (!resource || resource.lesson.course.organizationId !== organizationId) return null;
+  return resource;
 }
 
-async function teacherCanManage(resourceId: string, session: Awaited<ReturnType<typeof requireSession>>) {
-  if (!session || !isTeacher(session)) return false;
-  const resource = await getResource(resourceId);
+async function teacherCanManage(
+  resourceId: string,
+  organizationId: string,
+  session: AppSession,
+  member: OrganizationMember | null,
+) {
+  if (!isTeacher(session, member)) return false;
+  const resource = await getResource(resourceId, organizationId);
   if (!resource) return false;
-  return Boolean(await findLessonForTeacher(resource.lessonId, session));
+  return Boolean(
+    await findLessonForTeacher(
+      resource.lessonId,
+      organizationId,
+      session,
+      member,
+    ),
+  );
 }
 
 export async function GET(_request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
 
   const { resourceId } = await params;
-  const resource = await getResource(resourceId);
+  const resource = await getResource(resourceId, tenant.organizationId);
   if (!resource) return jsonError("Resource not found", 404);
-  if (!(await canAccessLesson(resource.lessonId, session))) {
+  if (
+    !(await canAccessLesson(
+      resource.lessonId,
+      tenant.organizationId,
+      session,
+      tenant.member,
+    ))
+  ) {
     return jsonError("Forbidden", 403);
   }
 
   const latestAttempt =
-    session.user.role === "STUDENT"
+    tenant.member?.role === "STUDENT"
       ? await prisma.resourceAttempt.findFirst({
           where: {
             resourceId: resource.id,
@@ -49,12 +80,15 @@ export async function GET(_request: Request, { params }: Params) {
 }
 
 export async function PATCH(request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (!isTeacher(session)) return jsonError("Forbidden", 403);
+  if (!isTeacher(session, tenant.member)) return jsonError("Forbidden", 403);
 
   const { resourceId } = await params;
-  if (!(await teacherCanManage(resourceId, session))) {
+  if (!(await teacherCanManage(resourceId, tenant.organizationId, session, tenant.member))) {
     return jsonError("Resource not found", 404);
   }
 
@@ -76,12 +110,15 @@ export async function PATCH(request: Request, { params }: Params) {
 }
 
 export async function DELETE(_request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (!isTeacher(session)) return jsonError("Forbidden", 403);
+  if (!isTeacher(session, tenant.member)) return jsonError("Forbidden", 403);
 
   const { resourceId } = await params;
-  if (!(await teacherCanManage(resourceId, session))) {
+  if (!(await teacherCanManage(resourceId, tenant.organizationId, session, tenant.member))) {
     return jsonError("Resource not found", 404);
   }
 

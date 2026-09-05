@@ -1,14 +1,14 @@
 import { getInstructorAnalyticsData } from "@/lib/dashboard-data";
-import { jsonError, requireSession } from "@/lib/api";
+import { requireTeacherApi } from "@/lib/api";
 
 export async function GET() {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "INSTRUCTOR" && session.user.role !== "ADMIN") {
-    return jsonError("Forbidden", 403);
-  }
+  const auth = await requireTeacherApi();
+  if (auth instanceof Response) return auth;
 
-  const data = await getInstructorAnalyticsData(session.user.id);
+  const data = await getInstructorAnalyticsData(
+    auth.session.user.id,
+    auth.organizationId,
+  );
 
   return Response.json({
     data,

@@ -24,6 +24,7 @@ export async function getLatestPaymentForCourse(userId: string, courseId: string
 }
 
 export async function submitCoursePayment(input: {
+  organizationId: string;
   userId: string;
   courseId: string;
   paymentMethodId: string;
@@ -31,7 +32,7 @@ export async function submitCoursePayment(input: {
   referenceNote?: string | null;
 }) {
   const course = await prisma.course.findFirst({
-    where: { id: input.courseId, status: "PUBLISHED" },
+    where: { id: input.courseId, organizationId: input.organizationId, status: "PUBLISHED" },
     select: { id: true, title: true, slug: true, price: true, priceNpr: true },
   });
 
@@ -74,7 +75,7 @@ export async function submitCoursePayment(input: {
     };
   }
 
-  const method = await getPaymentMethodById(input.paymentMethodId);
+  const method = await getPaymentMethodById(input.paymentMethodId, input.organizationId);
   if (!method || !method.enabled) {
     return { ok: false as const, error: "Payment method not available", status: 400 };
   }
@@ -110,6 +111,7 @@ export async function submitCoursePayment(input: {
 }
 
 export async function reviewCoursePayment(input: {
+  organizationId: string;
   adminId: string;
   paymentId: string;
   action: "approve" | "reject";
@@ -118,12 +120,12 @@ export async function reviewCoursePayment(input: {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId },
     include: {
-      course: { select: { id: true, slug: true, title: true } },
-      user: { select: { id: true, role: true, name: true, email: true } },
+      course: { select: { id: true, slug: true, title: true, organizationId: true } },
+      user: { select: { id: true, name: true, email: true } },
     },
   });
 
-  if (!payment) {
+  if (!payment || payment.course.organizationId !== input.organizationId) {
     return { ok: false as const, error: "Payment not found", status: 404 };
   }
 
@@ -165,10 +167,21 @@ export async function reviewCoursePayment(input: {
     },
   });
 
+  const member = await prisma.organizationMember.findUnique({
+    where: {
+      organizationId_userId: {
+        organizationId: input.organizationId,
+        userId: payment.userId,
+      },
+    },
+    select: { role: true },
+  });
+
   const enrollResult = await enrollUserInCourse(
     payment.userId,
-    payment.user.role,
+    member?.role ?? "STUDENT",
     payment.courseId,
+    input.organizationId,
   );
 
   if (!enrollResult.ok && enrollResult.status !== 409) {
@@ -189,9 +202,12 @@ export async function reviewCoursePayment(input: {
   };
 }
 
-export async function listPaymentsForAdmin(status?: PaymentStatus) {
+export async function listPaymentsForAdmin(organizationId: string, status?: PaymentStatus) {
   return prisma.payment.findMany({
-    where: status ? { status } : undefined,
+    where: {
+      course: { organizationId },
+      ...(status ? { status } : {}),
+    },
     orderBy: { createdAt: "desc" },
     include: {
       user: { select: { id: true, name: true, email: true } },

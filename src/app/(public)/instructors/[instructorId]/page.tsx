@@ -3,6 +3,7 @@ import { BookOpen, Users } from "lucide-react";
 import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { getInstructorProfile } from "@/lib/dashboard-data";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 
 type Props = { params: Promise<{ instructorId: string }> };
@@ -13,7 +14,9 @@ function formatPrice(cents: number) {
 
 export default async function InstructorProfilePage({ params }: Props) {
   const { instructorId } = await params;
-  const instructor = await getInstructorProfile(instructorId);
+  const ctx = await resolveTenantFromHeaders();
+  if (!ctx) notFound();
+  const instructor = await getInstructorProfile(instructorId, ctx.organizationId);
 
   if (!instructor) notFound();
 

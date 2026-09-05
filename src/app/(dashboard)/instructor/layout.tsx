@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/auth";
 
-function homeForRole(role: string | undefined) {
+function homeForRole(role: string | null | undefined) {
   if (role === "ADMIN") return "/admin";
   if (role === "INSTRUCTOR") return "/instructor";
   return "/student";
@@ -14,10 +14,11 @@ export default async function InstructorLayout({
 }) {
   const session = await getServerSession();
   if (!session) redirect("/login");
-
-  if (session.user.role !== "INSTRUCTOR") {
-    redirect(homeForRole(session.user.role as string | undefined));
+  if (
+    session.user.role !== "INSTRUCTOR" &&
+    session.user.role !== "ADMIN"
+  ) {
+    redirect(homeForRole(session.user.role));
   }
-
   return <>{children}</>;
 }

@@ -1,4 +1,4 @@
-import type { Role } from "@prisma/client";
+import type { OrgRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { enrollUserInCourse } from "@/lib/enrollments";
@@ -113,9 +113,12 @@ export async function maybeIssueRoadmapCertificate(
   }
 }
 
-export async function listPublishedRoadmaps(studentId?: string | null) {
+export async function listPublishedRoadmaps(
+  organizationId: string,
+  studentId?: string | null,
+) {
   const roadmaps = await prisma.roadmap.findMany({
-    where: { status: "PUBLISHED" },
+    where: { organizationId, status: "PUBLISHED" },
     orderBy: [{ featured: "desc" }, { title: "asc" }],
     include: {
       courses: {
@@ -177,11 +180,13 @@ export async function listPublishedRoadmaps(studentId?: string | null) {
 }
 
 export async function getRoadmapDetail(
+  organizationId: string,
   slugOrId: string,
   studentId?: string | null,
 ): Promise<RoadmapDetail | null> {
   const roadmap = await prisma.roadmap.findFirst({
     where: {
+      organizationId,
       status: "PUBLISHED",
       OR: [{ slug: slugOrId }, { id: slugOrId }],
     },
@@ -378,11 +383,12 @@ export type EnrollRoadmapResult =
 
 export async function enrollUserInRoadmap(
   userId: string,
-  role: Role | string,
+  orgRole: OrgRole | string | null,
   roadmapId: string,
+  organizationId: string,
 ): Promise<EnrollRoadmapResult> {
   const roadmap = await prisma.roadmap.findFirst({
-    where: { id: roadmapId, status: "PUBLISHED" },
+    where: { id: roadmapId, organizationId, status: "PUBLISHED" },
     include: {
       courses: {
         orderBy: { order: "asc" },
@@ -408,10 +414,10 @@ export async function enrollUserInRoadmap(
     };
   }
 
-  const roleChanged = role !== "STUDENT";
+  const roleChanged = orgRole != null && orgRole !== "STUDENT";
   if (roleChanged) {
-    await prisma.user.update({
-      where: { id: userId },
+    await prisma.organizationMember.updateMany({
+      where: { organizationId, userId },
       data: { role: "STUDENT" },
     });
   }
@@ -430,7 +436,12 @@ export async function enrollUserInRoadmap(
 
   let coursesEnrolled = 0;
   for (const item of publishedCourses) {
-    const result = await enrollUserInCourse(userId, "STUDENT", item.course.id);
+    const result = await enrollUserInCourse(
+      userId,
+      "STUDENT",
+      item.course.id,
+      organizationId,
+    );
     if (result.ok && !result.alreadyEnrolled) {
       coursesEnrolled += 1;
     }

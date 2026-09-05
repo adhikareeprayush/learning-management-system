@@ -1,10 +1,9 @@
-import { jsonError, requireSession } from "@/lib/api";
+import { jsonError, requireOrgAdminApi } from "@/lib/api";
 import { listNewsletterSubscribers, unsubscribeNewsletter } from "@/lib/newsletter";
 
 export async function GET(request: Request) {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "ADMIN") return jsonError("Forbidden", 403);
+  const auth = await requireOrgAdminApi();
+  if (auth instanceof Response) return auth;
 
   const params = new URL(request.url).searchParams;
   const q = params.get("q")?.trim() || undefined;
@@ -14,14 +13,13 @@ export async function GET(request: Request) {
       ? statusParam
       : undefined;
 
-  const subscribers = await listNewsletterSubscribers({ q, status });
+  const subscribers = await listNewsletterSubscribers(auth.organizationId, { q, status });
   return Response.json({ subscribers });
 }
 
 export async function DELETE(request: Request) {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "ADMIN") return jsonError("Forbidden", 403);
+  const auth = await requireOrgAdminApi();
+  if (auth instanceof Response) return auth;
 
   const body = await request.json().catch(() => ({}));
   const email = typeof body.email === "string" ? body.email : "";
@@ -30,7 +28,7 @@ export async function DELETE(request: Request) {
     return jsonError("email is required", 400);
   }
 
-  const result = await unsubscribeNewsletter(email);
+  const result = await unsubscribeNewsletter(auth.organizationId, email);
   if (!result.ok) {
     return jsonError(result.error, result.status);
   }

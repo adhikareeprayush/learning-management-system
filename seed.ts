@@ -1,6 +1,7 @@
 import "dotenv/config";
+import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, Role, RoadmapStatus } from "@prisma/client";
+import { PrismaClient, Role, RoadmapStatus, OrgRole } from "@prisma/client";
 import { hashPassword } from "better-auth/crypto";
 import { serializeQuizPayload } from "./src/lib/lesson-resources";
 import { imagekitAsset } from "./src/lib/imagekit-url";
@@ -13,7 +14,12 @@ import {
 } from "./seed/catalog";
 import { linkRoadmapCourse, seedCourseWithModules } from "./seed/helpers";
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 5,
+  connectionTimeoutMillis: 15_000,
+} as ConstructorParameters<typeof Pool>[0]);
+const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 const DEMO_PASSWORD = "password123";
@@ -124,12 +130,95 @@ async function completeLessonsForStudent(
 async function main() {
   console.log("Seeding database...");
 
+  const plans = [
+    {
+      id: "plan_free",
+      slug: "free",
+      name: "Free",
+      description: "Get started with one course and up to 50 students.",
+      priceNpr: 0,
+      limits: { maxCourses: 1, maxInstructors: 1, maxStudents: 50, storageMb: 500 },
+      features: { certificates: true, roadmaps: false, analytics: false, whiteLabel: false },
+      sortOrder: 0,
+    },
+    {
+      id: "plan_starter",
+      slug: "starter",
+      name: "Starter",
+      description: "For growing institutes.",
+      priceNpr: 299900,
+      limits: { maxCourses: 10, maxInstructors: 3, maxStudents: 500, storageMb: 5000 },
+      features: { certificates: true, roadmaps: true, analytics: true, whiteLabel: false },
+      sortOrder: 1,
+    },
+    {
+      id: "plan_pro",
+      slug: "pro",
+      name: "Pro",
+      description: "Unlimited courses and advanced features.",
+      priceNpr: 999900,
+      limits: { maxCourses: -1, maxInstructors: 10, maxStudents: 5000, storageMb: 50000 },
+      features: { certificates: true, roadmaps: true, analytics: true, whiteLabel: true },
+      sortOrder: 2,
+    },
+  ];
+
+  for (const plan of plans) {
+    await prisma.plan.upsert({
+      where: { id: plan.id },
+      update: {
+        name: plan.name,
+        description: plan.description,
+        priceNpr: plan.priceNpr,
+        limits: plan.limits,
+        features: plan.features,
+        sortOrder: plan.sortOrder,
+      },
+      create: {
+        id: plan.id,
+        slug: plan.slug,
+        name: plan.name,
+        description: plan.description,
+        priceNpr: plan.priceNpr,
+        limits: plan.limits,
+        features: plan.features,
+        isPublic: true,
+        sortOrder: plan.sortOrder,
+      },
+    });
+  }
+
+  const org = await prisma.organization.upsert({
+    where: { slug: "edujarr" },
+    update: { name: "Edujarr Demo Institute", status: "ACTIVE", planId: "plan_pro" },
+    create: {
+      id: "org_edujarr",
+      name: "Edujarr Demo Institute",
+      slug: "edujarr",
+      subdomain: "edujarr",
+      status: "ACTIVE",
+      planId: "plan_pro",
+    },
+  });
+
+  await prisma.organizationSubscription.upsert({
+    where: { organizationId: org.id },
+    update: { planId: "plan_pro", status: "ACTIVE" },
+    create: {
+      id: "sub_edujarr",
+      organizationId: org.id,
+      planId: "plan_pro",
+      status: "ACTIVE",
+      currentPeriodEnd: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+    },
+  });
+
   const admin = await upsertUserWithPassword({
     email: "admin@edujarr.com",
     name: "Sam Admin",
     role: Role.ADMIN,
     image: asset("/images/about/video.jpg"),
-    bio: "Platform super admin overseeing course quality, user access, and reporting across EduJarr.",
+    bio: "Admin overseeing course quality, user access, and reporting.",
     extendedProfile: {
       headline: "Head of Learning Operations",
       location: "San Francisco, CA",
@@ -206,9 +295,30 @@ async function main() {
     ),
   );
 
+  async function ensureMember(userId: string, role: OrgRole) {
+    await prisma.organizationMember.upsert({
+      where: {
+        organizationId_userId: { organizationId: org.id, userId },
+      },
+      update: { role },
+      create: { organizationId: org.id, userId, role },
+    });
+  }
+
+  await ensureMember(admin.id, OrgRole.ORG_ADMIN);
+  await ensureMember(instructor.id, OrgRole.INSTRUCTOR);
+  for (const student of students) {
+    await ensureMember(student.id, OrgRole.STUDENT);
+  }
+
   const coursesBySlug = new Map<string, { id: string; slug: string }>();
   for (const courseData of courseCatalog) {
-    const course = await seedCourseWithModules(prisma, instructor.id, courseData);
+    const course = await seedCourseWithModules(
+      prisma,
+      instructor.id,
+      org.id,
+      courseData,
+    );
     coursesBySlug.set(course.slug, course);
   }
 
@@ -491,7 +601,12 @@ async function main() {
 
   for (const roadmapData of roadmapCatalog) {
     const roadmap = await prisma.roadmap.upsert({
-      where: { slug: roadmapData.slug },
+      where: {
+        organizationId_slug: {
+          organizationId: org.id,
+          slug: roadmapData.slug,
+        },
+      },
       update: {
         title: roadmapData.title,
         description: roadmapData.description,
@@ -504,6 +619,7 @@ async function main() {
         outcomes: roadmapData.outcomes,
       },
       create: {
+        organizationId: org.id,
         title: roadmapData.title,
         slug: roadmapData.slug,
         description: roadmapData.description,
@@ -621,6 +737,7 @@ async function main() {
       },
       create: {
         id: method.id,
+        organizationId: org.id,
         type: method.type,
         label: method.label,
         accountInfo: method.accountInfo,
@@ -637,7 +754,12 @@ async function main() {
     subscribedAt.setDate(subscribedAt.getDate() - Math.floor(Math.random() * 45));
 
     await prisma.newsletterSubscriber.upsert({
-      where: { email: subscriber.email },
+      where: {
+        organizationId_email: {
+          organizationId: org.id,
+          email: subscriber.email,
+        },
+      },
       update: {
         name: subscriber.name,
         source: subscriber.source,
@@ -646,6 +768,7 @@ async function main() {
           subscriber.status === "UNSUBSCRIBED" ? new Date() : null,
       },
       create: {
+        organizationId: org.id,
         email: subscriber.email,
         name: subscriber.name,
         source: subscriber.source,
@@ -680,6 +803,7 @@ async function main() {
       },
       create: {
         id: campaign.id,
+        organizationId: org.id,
         subject: campaign.subject,
         body: campaign.body,
         status: campaign.status,
@@ -713,4 +837,5 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    await pool.end().catch(() => undefined);
   });

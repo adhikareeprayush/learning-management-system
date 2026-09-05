@@ -43,6 +43,16 @@ export function RegisterForm() {
       return;
     }
 
+    const joinRes = await fetch("/api/membership/join", { method: "POST" });
+    if (!joinRes.ok) {
+      const data = (await joinRes.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      setLoading(false);
+      setError(data.error || "Account created, but joining failed");
+      return;
+    }
+
     if (roadmapId) {
       const result = await enrollInRoadmap(roadmapId);
       if (result.ok && result.roadmapSlug) {

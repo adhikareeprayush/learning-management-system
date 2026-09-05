@@ -38,10 +38,13 @@ export type CourseSeed = {
 export async function seedCourseWithModules(
   prisma: PrismaClient,
   instructorId: string,
+  organizationId: string,
   data: CourseSeed,
 ) {
   const course = await prisma.course.upsert({
-    where: { slug: data.slug },
+    where: {
+      organizationId_slug: { organizationId, slug: data.slug },
+    },
     update: {
       title: data.title,
       description: data.description,
@@ -56,6 +59,7 @@ export async function seedCourseWithModules(
       outcomes: data.outcomes,
     },
     create: {
+      organizationId,
       title: data.title,
       slug: data.slug,
       description: data.description,
@@ -93,7 +97,7 @@ export async function seedCourseWithModules(
           summary: lesson.summary,
           duration: lesson.duration,
           isFree: lesson.isFree ?? false,
-          videoUrl: lesson.videoUrl ?? null,
+          videoUrl: lesson.videoUrl,
           moduleId: module.id,
         },
         create: {
@@ -105,7 +109,7 @@ export async function seedCourseWithModules(
           order: lesson.order,
           duration: lesson.duration,
           isFree: lesson.isFree ?? false,
-          videoUrl: lesson.videoUrl ?? null,
+          videoUrl: lesson.videoUrl,
         },
       });
     }

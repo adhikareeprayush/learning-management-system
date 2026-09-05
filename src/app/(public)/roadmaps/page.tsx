@@ -10,10 +10,18 @@ import {
 } from "lucide-react";
 import { getServerSession } from "@/lib/auth";
 import { formatLevel, listPublishedRoadmaps } from "@/lib/roadmaps";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
+import { notFound } from "next/navigation";
 
 export default async function RoadmapsPage() {
+  const tenant = await resolveTenantFromHeaders();
+  if (!tenant) notFound();
+
   const session = await getServerSession();
-  const roadmaps = await listPublishedRoadmaps(session?.user.id ?? null);
+  const roadmaps = await listPublishedRoadmaps(
+    tenant.organizationId,
+    session?.user.id ?? null,
+  );
 
   return (
     <div className="bg-[#f7f8fc] pb-16 sm:pb-20">

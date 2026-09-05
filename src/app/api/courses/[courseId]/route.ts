@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
+import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import { isOrgAdmin } from "@/lib/tenant";
 
 type Params = { params: Promise<{ courseId: string }> };
 
@@ -11,10 +12,14 @@ function formatPrice(cents: number) {
 
 export async function GET(_request: Request, { params }: Params) {
   try {
+    const tenant = await requireTenantApi();
+    if (tenant instanceof Response) return tenant;
+
     const { courseId } = await params;
 
     const course = await prisma.course.findFirst({
       where: {
+        organizationId: tenant.organizationId,
         OR: [{ id: courseId }, { slug: courseId }],
       },
       include: {
@@ -100,10 +105,11 @@ export async function GET(_request: Request, { params }: Params) {
 
 export async function PATCH(request: Request, { params }: Params) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const tenant = await requireTenantApi();
+    if (tenant instanceof Response) return tenant;
+
+    const session = await requireSession();
+    if (!session) return jsonError("Unauthorized", 401);
 
     const { courseId } = await params;
     const body = await request.json();
@@ -115,6 +121,7 @@ export async function PATCH(request: Request, { params }: Params) {
 
     const existing = await prisma.course.findFirst({
       where: {
+        organizationId: tenant.organizationId,
         OR: [{ id: courseId }, { slug: courseId }],
       },
     });
@@ -124,7 +131,7 @@ export async function PATCH(request: Request, { params }: Params) {
     }
 
     const isOwner = existing.instructorId === session.user.id;
-    const isAdmin = session.user.role === "ADMIN";
+    const isAdmin = isOrgAdmin(tenant.member);
     if (!isOwner && !isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
@@ -205,12 +212,26 @@ export async function PATCH(request: Request, { params }: Params) {
 }
 
 export async function DELETE(_request: Request, { params }: Params) {
-  const session = await getServerSession();
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
+  const session = await requireSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
   const { courseId } = await params;
-  const existing = await prisma.course.findFirst({ where: { OR: [{ id: courseId }, { slug: courseId }] } });
+  const existing = await prisma.course.findFirst({
+    where: {
+      organizationId: tenant.organizationId,
+      OR: [{ id: courseId }, { slug: courseId }],
+    },
+  });
   if (!existing) return NextResponse.json({ error: "Course not found" }, { status: 404 });
-  if (session.user.role !== "ADMIN" && existing.instructorId !== session.user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const isAdmin = isOrgAdmin(tenant.member);
+  if (!isAdmin && existing.instructorId !== session.user.id) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   await prisma.course.delete({ where: { id: existing.id } });
   return new Response(null, { status: 204 });
 }

@@ -80,17 +80,19 @@ function buildDistribution(reviews: { rating: number }[]) {
 export async function getCourseReviewsBundle(
   courseId: string,
   studentId?: string | null,
-  options?: { instructorId?: string },
+  options?: { instructorId?: string; organizationId?: string },
 ): Promise<CourseReviewsBundle | null> {
   const course = await prisma.course.findFirst({
     where: options?.instructorId
       ? {
           OR: [{ id: courseId }, { slug: courseId }],
           instructorId: options.instructorId,
+          ...(options.organizationId ? { organizationId: options.organizationId } : {}),
         }
       : {
           OR: [{ id: courseId }, { slug: courseId }],
           status: "PUBLISHED",
+          ...(options?.organizationId ? { organizationId: options.organizationId } : {}),
         },
     select: { id: true },
   });

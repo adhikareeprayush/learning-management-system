@@ -1,11 +1,15 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { cleanString, jsonError, optionalString, requireSession } from "@/lib/api";
+import { cleanString, jsonError, optionalString, requireSession, requireTenantApi } from "@/lib/api";
 import { mergeExtendedProfile } from "@/lib/profile-data";
 
 export async function GET() {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
+
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
     select: {
@@ -26,8 +30,12 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
+
   const body = await request.json();
   const name = cleanString(body.name, 120);
   if (!name) return jsonError("name is required", 400);

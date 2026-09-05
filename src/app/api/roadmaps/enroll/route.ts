@@ -1,7 +1,11 @@
-import { jsonError, requireSession } from "@/lib/api";
+import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import { enrollUserInRoadmap } from "@/lib/roadmaps";
 
 export async function POST(request: Request) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+  if (!tenant.member) return jsonError("Not a member of this institute", 403);
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
 
@@ -12,8 +16,9 @@ export async function POST(request: Request) {
 
   const result = await enrollUserInRoadmap(
     session.user.id,
-    session.user.role ?? "STUDENT",
+    tenant.member.role,
     roadmapId,
+    tenant.organizationId,
   );
 
   if (!result.ok) {

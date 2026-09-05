@@ -1,25 +1,41 @@
+import type { OrganizationMember } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import type { AppSession } from "@/lib/api";
+import { isOrgAdmin, isOrgTeacher } from "@/lib/tenant";
 
-export async function findManagedCourse(courseId: string, session: AppSession) {
+export async function findManagedCourse(
+  courseId: string,
+  organizationId: string,
+  session: AppSession,
+  member?: OrganizationMember | null,
+) {
   return prisma.course.findFirst({
     where: {
+      organizationId,
       OR: [{ id: courseId }, { slug: courseId }],
-      ...(session.user.role === "ADMIN"
-        ? {}
-        : { instructorId: session.user.id }),
+      ...(isOrgAdmin(member ?? null) ? {} : { instructorId: session.user.id }),
     },
   });
 }
 
-export async function canAccessCourse(courseId: string, session: AppSession) {
-  if (session.user.role === "ADMIN") return true;
-  const course = await prisma.course.findUnique({
-    where: { id: courseId },
+export async function canAccessCourse(
+  courseId: string,
+  organizationId: string,
+  session: AppSession,
+  member?: OrganizationMember | null,
+) {
+  if (isOrgAdmin(member ?? null)) return true;
+
+  const course = await prisma.course.findFirst({
+    where: { id: courseId, organizationId },
     select: { instructorId: true },
   });
-  if (course?.instructorId === session.user.id) return true;
-  if (session.user.role !== "STUDENT") return false;
+  if (!course) return false;
+
+  if (isOrgTeacher(member ?? null) && course.instructorId === session.user.id) {
+    return true;
+  }
+
   return Boolean(
     await prisma.enrollment.findUnique({
       where: {
@@ -30,24 +46,34 @@ export async function canAccessCourse(courseId: string, session: AppSession) {
   );
 }
 
-export async function canAccessLesson(lessonId: string, session: AppSession) {
+export async function canAccessLesson(
+  lessonId: string,
+  organizationId: string,
+  session: AppSession,
+  member?: OrganizationMember | null,
+) {
   const lesson = await prisma.lesson.findUnique({
     where: { id: lessonId },
-    select: { courseId: true },
+    select: { courseId: true, course: { select: { organizationId: true } } },
   });
-  if (!lesson) return false;
-  return canAccessCourse(lesson.courseId, session);
+  if (!lesson || lesson.course.organizationId !== organizationId) return false;
+  return canAccessCourse(lesson.courseId, organizationId, session, member);
 }
 
-export async function findLessonForTeacher(lessonId: string, session: AppSession) {
+export async function findLessonForTeacher(
+  lessonId: string,
+  organizationId: string,
+  session: AppSession,
+  member?: OrganizationMember | null,
+) {
   const lesson = await prisma.lesson.findUnique({
     where: { id: lessonId },
-    select: { id: true, courseId: true },
+    select: { id: true, courseId: true, course: { select: { organizationId: true } } },
   });
-  if (!lesson) return null;
-  const course = await findManagedCourse(lesson.courseId, session);
+  if (!lesson || lesson.course.organizationId !== organizationId) return null;
+  const course = await findManagedCourse(lesson.courseId, organizationId, session, member);
   if (!course) return null;
-  return lesson;
+  return { id: lesson.id, courseId: lesson.courseId };
 }
 
 export async function syncCourseDuration(courseId: string) {

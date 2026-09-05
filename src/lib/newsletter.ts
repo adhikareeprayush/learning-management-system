@@ -8,6 +8,7 @@ export function isValidNewsletterEmail(email: string) {
 }
 
 export async function subscribeToNewsletter(input: {
+  organizationId: string;
   email: string;
   name?: string | null;
   source?: string;
@@ -17,7 +18,9 @@ export async function subscribeToNewsletter(input: {
     return { ok: false as const, error: "Enter a valid email address", status: 400 };
   }
 
-  const existing = await prisma.newsletterSubscriber.findUnique({ where: { email } });
+  const existing = await prisma.newsletterSubscriber.findUnique({
+    where: { organizationId_email: { organizationId: input.organizationId, email } },
+  });
 
   if (existing?.status === "ACTIVE") {
     return { ok: true as const, alreadySubscribed: true, subscriber: existing };
@@ -25,7 +28,7 @@ export async function subscribeToNewsletter(input: {
 
   const subscriber = existing
     ? await prisma.newsletterSubscriber.update({
-        where: { email },
+        where: { organizationId_email: { organizationId: input.organizationId, email } },
         data: {
           status: "ACTIVE",
           name: input.name?.trim() || existing.name,
@@ -35,6 +38,7 @@ export async function subscribeToNewsletter(input: {
       })
     : await prisma.newsletterSubscriber.create({
         data: {
+          organizationId: input.organizationId,
           email,
           name: input.name?.trim() || null,
           source: input.source?.trim() || "footer",
@@ -44,10 +48,10 @@ export async function subscribeToNewsletter(input: {
   return { ok: true as const, alreadySubscribed: false, subscriber };
 }
 
-export async function unsubscribeNewsletter(email: string) {
+export async function unsubscribeNewsletter(organizationId: string, email: string) {
   const normalized = email.trim().toLowerCase();
   const existing = await prisma.newsletterSubscriber.findUnique({
-    where: { email: normalized },
+    where: { organizationId_email: { organizationId, email: normalized } },
   });
 
   if (!existing) {
@@ -59,20 +63,24 @@ export async function unsubscribeNewsletter(email: string) {
   }
 
   const subscriber = await prisma.newsletterSubscriber.update({
-    where: { email: normalized },
+    where: { organizationId_email: { organizationId, email: normalized } },
     data: { status: "UNSUBSCRIBED", unsubscribedAt: new Date() },
   });
 
   return { ok: true as const, subscriber };
 }
 
-export async function listNewsletterSubscribers(filters?: {
-  status?: NewsletterSubscriberStatus;
-  q?: string;
-}) {
+export async function listNewsletterSubscribers(
+  organizationId: string,
+  filters?: {
+    status?: NewsletterSubscriberStatus;
+    q?: string;
+  },
+) {
   const q = filters?.q?.trim();
   return prisma.newsletterSubscriber.findMany({
     where: {
+      organizationId,
       ...(filters?.status ? { status: filters.status } : {}),
       ...(q
         ? {
@@ -87,8 +95,9 @@ export async function listNewsletterSubscribers(filters?: {
   });
 }
 
-export async function listNewsletterCampaigns() {
+export async function listNewsletterCampaigns(organizationId: string) {
   return prisma.newsletterCampaign.findMany({
+    where: { organizationId },
     orderBy: { createdAt: "desc" },
     include: {
       createdBy: { select: { id: true, name: true, email: true } },
@@ -97,6 +106,7 @@ export async function listNewsletterCampaigns() {
 }
 
 export async function createNewsletterCampaign(input: {
+  organizationId: string;
   subject: string;
   body: string;
   createdById: string;
@@ -113,6 +123,7 @@ export async function createNewsletterCampaign(input: {
 
   const campaign = await prisma.newsletterCampaign.create({
     data: {
+      organizationId: input.organizationId,
       subject,
       body,
       createdById: input.createdById,
@@ -125,9 +136,9 @@ export async function createNewsletterCampaign(input: {
   return { ok: true as const, campaign };
 }
 
-export async function sendNewsletterCampaign(campaignId: string) {
-  const campaign = await prisma.newsletterCampaign.findUnique({
-    where: { id: campaignId },
+export async function sendNewsletterCampaign(organizationId: string, campaignId: string) {
+  const campaign = await prisma.newsletterCampaign.findFirst({
+    where: { id: campaignId, organizationId },
   });
 
   if (!campaign) {
@@ -139,7 +150,7 @@ export async function sendNewsletterCampaign(campaignId: string) {
   }
 
   const activeCount = await prisma.newsletterSubscriber.count({
-    where: { status: "ACTIVE" },
+    where: { organizationId, status: "ACTIVE" },
   });
 
   const updated = await prisma.newsletterCampaign.update({

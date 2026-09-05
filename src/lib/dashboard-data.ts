@@ -117,9 +117,12 @@ function computeStreakDays(completionDates: Date[], now = new Date()) {
   return streak;
 }
 
-export async function getStudentDashboardData(studentId: string) {
+export async function getStudentDashboardData(
+  studentId: string,
+  organizationId: string,
+) {
   const enrollments = await prisma.enrollment.findMany({
-    where: { studentId },
+    where: { studentId, course: { organizationId } },
     include: {
       course: {
         include: {
@@ -346,9 +349,12 @@ export async function getStudentDashboardData(studentId: string) {
   };
 }
 
-export async function getInstructorDashboardData(instructorId: string) {
+export async function getInstructorDashboardData(
+  instructorId: string,
+  organizationId: string,
+) {
   const courses = await prisma.course.findMany({
-    where: { instructorId },
+    where: { instructorId, organizationId },
     include: {
       _count: { select: { enrollments: true, lessons: true, reviews: true } },
       enrollments: {
@@ -479,15 +485,21 @@ export async function getInstructorDashboardData(instructorId: string) {
   };
 }
 
-export async function getAdminDashboardData() {
+export async function getAdminDashboardData(organizationId: string) {
+  const orgMemberFilter = { organizationId };
+  const orgCourseFilter = { organizationId };
+  const orgEnrollmentFilter = { course: { organizationId } };
+
   const [userCount, courseCount, enrollmentCount, inReviewCount, students, instructors] =
     await Promise.all([
-      prisma.user.count(),
-      prisma.course.count(),
-      prisma.enrollment.count(),
-      prisma.course.count({ where: { status: "IN_REVIEW" } }),
-      prisma.user.count({ where: { role: "STUDENT" } }),
-      prisma.user.count({ where: { role: "INSTRUCTOR" } }),
+      prisma.organizationMember.count({ where: orgMemberFilter }),
+      prisma.course.count({ where: orgCourseFilter }),
+      prisma.enrollment.count({ where: orgEnrollmentFilter }),
+      prisma.course.count({ where: { organizationId, status: "IN_REVIEW" } }),
+      prisma.organizationMember.count({ where: { organizationId, role: "STUDENT" } }),
+      prisma.organizationMember.count({
+        where: { organizationId, role: { in: ["INSTRUCTOR", "ORG_ADMIN"] } },
+      }),
     ]);
 
   const months = lastMonths(6);
@@ -498,8 +510,9 @@ export async function getAdminDashboardData() {
         name: "Students",
         data: await Promise.all(
           months.map((m) =>
-            prisma.user.count({
+            prisma.organizationMember.count({
               where: {
+                organizationId,
                 role: "STUDENT",
                 createdAt: { lte: m.end },
               },
@@ -511,9 +524,10 @@ export async function getAdminDashboardData() {
         name: "Instructors",
         data: await Promise.all(
           months.map((m) =>
-            prisma.user.count({
+            prisma.organizationMember.count({
               where: {
-                role: "INSTRUCTOR",
+                organizationId,
+                role: { in: ["INSTRUCTOR", "ORG_ADMIN"] },
                 createdAt: { lte: m.end },
               },
             }),
@@ -529,6 +543,7 @@ export async function getAdminDashboardData() {
     where: {
       completed: true,
       completedAt: { gte: engagementWeekStart },
+      lesson: { course: { organizationId } },
     },
     select: { studentId: true, completedAt: true },
   });
@@ -552,16 +567,17 @@ export async function getAdminDashboardData() {
   };
 
   const moderationQueue = await prisma.course.findMany({
-    where: { status: "IN_REVIEW" },
+    where: { organizationId, status: "IN_REVIEW" },
     take: 5,
     include: { instructor: { select: { name: true } } },
     orderBy: { updatedAt: "desc" },
   });
 
-  const recentUsers = await prisma.user.findMany({
+  const recentUsers = await prisma.organizationMember.findMany({
+    where: { organizationId },
     orderBy: { createdAt: "desc" },
     take: 5,
-    select: { id: true, name: true, role: true, createdAt: true },
+    include: { user: { select: { id: true, name: true, role: true, createdAt: true } } },
   });
 
   return {
@@ -611,39 +627,65 @@ export async function getAdminDashboardData() {
       status: c.status,
       submitted: c.updatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     })),
-    adminActivity: recentUsers.map((u) => ({
-      id: u.id,
-      text: `${u.name} joined as ${u.role.toLowerCase()}`,
-      time: u.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    adminActivity: recentUsers.map((m) => ({
+      id: m.user.id,
+      text: `${m.user.name} joined as ${m.role.toLowerCase()}`,
+      time: m.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     })),
     engagementWeekly,
   };
 }
 
-export async function getInstructorsFromDb() {
-  return prisma.user.findMany({
-    where: { role: "INSTRUCTOR" },
+export async function getInstructorsFromDb(organizationId: string) {
+  const members = await prisma.organizationMember.findMany({
+    where: {
+      organizationId,
+      role: { in: ["INSTRUCTOR", "ORG_ADMIN"] },
+    },
     include: {
-      _count: { select: { courseTeaching: true } },
-      courseTeaching: {
-        where: { status: "PUBLISHED" },
-        take: 3,
-        select: { id: true, title: true, slug: true, thumbnail: true, category: true },
+      user: {
+        include: {
+          courseTeaching: {
+            where: { organizationId, status: "PUBLISHED" },
+            take: 3,
+            select: { id: true, title: true, slug: true, thumbnail: true, category: true },
+          },
+        },
       },
     },
     orderBy: { createdAt: "asc" },
   });
+
+  return members.map((m) => ({
+    ...m.user,
+    _count: {
+      courseTeaching: m.user.courseTeaching.length,
+    },
+  }));
 }
 
-export async function getInstructorProfile(instructorId: string) {
+export async function getInstructorProfile(instructorId: string, organizationId: string) {
+  const member = await prisma.organizationMember.findFirst({
+    where: {
+      organizationId,
+      userId: instructorId,
+      role: { in: ["INSTRUCTOR", "ORG_ADMIN"] },
+    },
+  });
+  if (!member) return null;
+
   return prisma.user.findFirst({
-    where: { id: instructorId, role: "INSTRUCTOR" },
+    where: { id: instructorId },
     include: {
       courseTeaching: {
-        where: { status: "PUBLISHED" },
+        where: { organizationId, status: "PUBLISHED" },
         include: { _count: { select: { enrollments: true, reviews: true } } },
       },
-      _count: { select: { courseTeaching: true } },
+      _count: {
+        select: {
+          courseTeaching: true,
+        },
+      },
     },
   });
 }
@@ -701,14 +743,14 @@ function formatStudentCount(count: number) {
   return `${count.toLocaleString()} Student${count === 1 ? "" : "s"}`;
 }
 
-export async function getFeaturedCoursesForHome() {
+export async function getFeaturedCoursesForHome(organizationId: string) {
   const baseInclude = {
     _count: { select: { enrollments: true } },
     reviews: { select: { rating: true } },
   } as const;
 
   let courses = await prisma.course.findMany({
-    where: { status: "PUBLISHED", featured: true },
+    where: { organizationId, status: "PUBLISHED", featured: true },
     take: 6,
     orderBy: { createdAt: "desc" },
     include: baseInclude,
@@ -716,7 +758,7 @@ export async function getFeaturedCoursesForHome() {
 
   if (courses.length === 0) {
     courses = await prisma.course.findMany({
-      where: { status: "PUBLISHED" },
+      where: { organizationId, status: "PUBLISHED" },
       take: 6,
       orderBy: { enrollments: { _count: "desc" } },
       include: baseInclude,
@@ -749,9 +791,12 @@ export async function getFeaturedCoursesForHome() {
   });
 }
 
-export async function getInstructorAnalyticsData(instructorId: string) {
+export async function getInstructorAnalyticsData(
+  instructorId: string,
+  organizationId: string,
+) {
   const courses = await prisma.course.findMany({
-    where: { instructorId, status: "PUBLISHED" },
+    where: { instructorId, organizationId, status: "PUBLISHED" },
     include: {
       _count: { select: { enrollments: true } },
       lessons: { select: { id: true, duration: true } },
@@ -901,9 +946,13 @@ export async function getInstructorAnalyticsData(instructorId: string) {
   };
 }
 
-export async function getAdminReportsData(period: ReportPeriodKey) {
+export async function getAdminReportsData(
+  organizationId: string,
+  period: ReportPeriodKey,
+) {
   const { start, end } = periodRange(period);
   const buckets = periodBuckets(period);
+  const orgEnrollmentFilter = { course: { organizationId } };
 
   const [
     enrollmentsInPeriod,
@@ -913,12 +962,13 @@ export async function getAdminReportsData(period: ReportPeriodKey) {
     instructorsInPeriod,
   ] = await Promise.all([
     prisma.enrollment.count({
-      where: { enrolledAt: { gte: start, lte: end } },
+      where: { ...orgEnrollmentFilter, enrolledAt: { gte: start, lte: end } },
     }),
     prisma.lessonProgress.findMany({
       where: {
         completed: true,
         completedAt: { gte: start, lte: end },
+        lesson: { course: { organizationId } },
       },
       select: {
         studentId: true,
@@ -926,13 +976,18 @@ export async function getAdminReportsData(period: ReportPeriodKey) {
       },
     }),
     prisma.enrollment.findMany({
+      where: orgEnrollmentFilter,
       select: { progress: true, course: { select: { category: true } } },
     }),
-    prisma.user.count({
-      where: { role: "STUDENT", createdAt: { gte: start, lte: end } },
+    prisma.organizationMember.count({
+      where: { organizationId, role: "STUDENT", createdAt: { gte: start, lte: end } },
     }),
-    prisma.user.count({
-      where: { role: "INSTRUCTOR", createdAt: { gte: start, lte: end } },
+    prisma.organizationMember.count({
+      where: {
+        organizationId,
+        role: { in: ["INSTRUCTOR", "ORG_ADMIN"] },
+        createdAt: { gte: start, lte: end },
+      },
     }),
   ]);
 
@@ -964,8 +1019,9 @@ export async function getAdminReportsData(period: ReportPeriodKey) {
 
   const growthStudents = await Promise.all(
     buckets.map((bucket) =>
-      prisma.user.count({
+      prisma.organizationMember.count({
         where: {
+          organizationId,
           role: "STUDENT",
           createdAt: { gte: bucket.start, lte: bucket.end },
         },
@@ -975,9 +1031,10 @@ export async function getAdminReportsData(period: ReportPeriodKey) {
 
   const growthInstructors = await Promise.all(
     buckets.map((bucket) =>
-      prisma.user.count({
+      prisma.organizationMember.count({
         where: {
-          role: "INSTRUCTOR",
+          organizationId,
+          role: { in: ["INSTRUCTOR", "ORG_ADMIN"] },
           createdAt: { gte: bucket.start, lte: bucket.end },
         },
       }),
@@ -990,6 +1047,7 @@ export async function getAdminReportsData(period: ReportPeriodKey) {
         where: {
           completed: true,
           completedAt: { gte: bucket.start, lte: bucket.end },
+          lesson: { course: { organizationId } },
         },
       }),
     ),
@@ -1003,10 +1061,12 @@ export async function getAdminReportsData(period: ReportPeriodKey) {
 
   const [totalStudents, totalInstructors, totalCourses, totalEnrollments] =
     await Promise.all([
-      prisma.user.count({ where: { role: "STUDENT" } }),
-      prisma.user.count({ where: { role: "INSTRUCTOR" } }),
-      prisma.course.count(),
-      prisma.enrollment.count(),
+      prisma.organizationMember.count({ where: { organizationId, role: "STUDENT" } }),
+      prisma.organizationMember.count({
+        where: { organizationId, role: { in: ["INSTRUCTOR", "ORG_ADMIN"] } },
+      }),
+      prisma.course.count({ where: { organizationId } }),
+      prisma.enrollment.count({ where: orgEnrollmentFilter }),
     ]);
 
   const exportRows = [

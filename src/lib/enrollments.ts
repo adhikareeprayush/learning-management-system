@@ -1,6 +1,7 @@
-import type { Role } from "@prisma/client";
+import type { OrgRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { courseRequiresPayment } from "@/lib/pricing";
+import { ensureMembershipForEnrollment } from "@/lib/membership";
 
 export type EnrollUserResult =
   | {
@@ -21,11 +22,12 @@ export type EnrollUserResult =
 
 export async function enrollUserInCourse(
   userId: string,
-  role: Role | string,
+  _orgRole: OrgRole | string | null,
   courseId: string,
+  organizationId: string,
 ): Promise<EnrollUserResult> {
   const course = await prisma.course.findFirst({
-    where: { id: courseId, status: "PUBLISHED" },
+    where: { id: courseId, organizationId, status: "PUBLISHED" },
     select: { id: true, slug: true, price: true, priceNpr: true },
   });
 
@@ -47,16 +49,16 @@ export async function enrollUserInCourse(
     }
   }
 
-  const roleChanged = role !== "STUDENT";
+  const membership = await ensureMembershipForEnrollment(organizationId, userId);
+  if (!membership.ok) {
+    return {
+      ok: false,
+      error: membership.error,
+      status: membership.status,
+    };
+  }
 
   const result = await prisma.$transaction(async (tx) => {
-    if (roleChanged) {
-      await tx.user.update({
-        where: { id: userId },
-        data: { role: "STUDENT" },
-      });
-    }
-
     const existing = await tx.enrollment.findUnique({
       where: {
         courseId_studentId: { courseId, studentId: userId },
@@ -77,7 +79,7 @@ export async function enrollUserInCourse(
   return {
     ok: true,
     courseSlug: course.slug,
-    roleChanged,
+    roleChanged: false,
     alreadyEnrolled: result.alreadyEnrolled,
     enrollmentId: result.enrollmentId,
   };

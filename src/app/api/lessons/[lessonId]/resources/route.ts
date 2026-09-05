@@ -1,10 +1,10 @@
 import { prisma } from "@/lib/db";
 import {
   cleanString,
-  finiteNumber,
   isTeacher,
   jsonError,
   requireSession,
+  requireTenantApi,
 } from "@/lib/api";
 import { canAccessLesson, findLessonForTeacher } from "@/lib/course-access";
 
@@ -13,11 +13,21 @@ type Params = { params: Promise<{ lessonId: string }> };
 const RESOURCE_TYPES = new Set(["VIDEO", "TEXT", "EXERCISE", "QUIZ"]);
 
 export async function GET(_request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
 
   const { lessonId } = await params;
-  if (!(await canAccessLesson(lessonId, session))) {
+  if (
+    !(await canAccessLesson(
+      lessonId,
+      tenant.organizationId,
+      session,
+      tenant.member,
+    ))
+  ) {
     return jsonError("Forbidden", 403);
   }
 
@@ -30,12 +40,22 @@ export async function GET(_request: Request, { params }: Params) {
 }
 
 export async function POST(request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (!isTeacher(session)) return jsonError("Forbidden", 403);
+  if (!isTeacher(session, tenant.member)) return jsonError("Forbidden", 403);
 
   const { lessonId } = await params;
-  if (!(await findLessonForTeacher(lessonId, session))) {
+  if (
+    !(await findLessonForTeacher(
+      lessonId,
+      tenant.organizationId,
+      session,
+      tenant.member,
+    ))
+  ) {
     return jsonError("Lesson not found", 404);
   }
 

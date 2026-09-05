@@ -1,14 +1,23 @@
 import { prisma } from "@/lib/db";
-import { cleanString, isTeacher, jsonError, requireSession } from "@/lib/api";
+import { cleanString, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import { findManagedCourse } from "@/lib/course-access";
 
 type Params = { params: Promise<{ courseId: string }> };
 
 export async function GET(_request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
+
   const { courseId } = await params;
-  const course = await findManagedCourse(courseId, session);
+  const course = await findManagedCourse(
+    courseId,
+    tenant.organizationId,
+    session,
+    tenant.member,
+  );
   if (!course) return jsonError("Course not found", 404);
   const modules = await prisma.module.findMany({
     where: { courseId: course.id },
@@ -19,11 +28,20 @@ export async function GET(_request: Request, { params }: Params) {
 }
 
 export async function POST(request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (!isTeacher(session)) return jsonError("Forbidden", 403);
+  if (!isTeacher(session, tenant.member)) return jsonError("Forbidden", 403);
+
   const { courseId } = await params;
-  const course = await findManagedCourse(courseId, session);
+  const course = await findManagedCourse(
+    courseId,
+    tenant.organizationId,
+    session,
+    tenant.member,
+  );
   if (!course) return jsonError("Course not found", 404);
   const body = await request.json();
   const title = cleanString(body.title, 160);

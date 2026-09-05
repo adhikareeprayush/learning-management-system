@@ -1,36 +1,22 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "@/lib/auth";
-import { enrollUserInCourse } from "@/lib/enrollments";
 import { prisma } from "@/lib/db";
+import { enrollUserInCourse } from "@/lib/enrollments";
+import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
 
 export async function GET() {
   try {
-    const session = await getServerSession();
+    const tenant = await requireTenantApi();
+    if (tenant instanceof Response) return tenant;
 
-    if (!session) {
-      return NextResponse.json(
-        {
-          error: "Unauthorized",
-        },
-        { status: 401 },
-      );
-    }
-
-    if (session.user.role !== "STUDENT") {
-      return NextResponse.json(
-        {
-          error: "Forbidden",
-        },
-        { status: 403 },
-      );
-    }
+    const session = await requireSession();
+    if (!session) return jsonError("Unauthorized", 401);
 
     const studentId = session.user.id;
 
-    // Prisma Query to get the enrollments of the student
     const enrollments = await prisma.enrollment.findMany({
       where: {
-        studentId: studentId,
+        studentId,
+        course: { organizationId: tenant.organizationId },
       },
       orderBy: {
         enrolledAt: "desc",
@@ -120,31 +106,28 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession();
+    const tenant = await requireTenantApi();
+    if (tenant instanceof Response) return tenant;
+    if (!tenant.member) return jsonError("Not a member of this institute", 403);
 
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const session = await requireSession();
+    if (!session) return jsonError("Unauthorized", 401);
 
     const body = await request.json();
-
     const courseId = body.courseId as string | undefined;
 
     if (!courseId) {
       return NextResponse.json(
-        {
-          error: "courseId is required",
-        },
-        {
-          status: 400,
-        },
+        { error: "courseId is required" },
+        { status: 400 },
       );
     }
 
     const result = await enrollUserInCourse(
       session.user.id,
-      session.user.role ?? "STUDENT",
+      tenant.member.role,
       courseId,
+      tenant.organizationId,
     );
 
     if (!result.ok) {

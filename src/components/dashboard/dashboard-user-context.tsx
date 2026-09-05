@@ -7,7 +7,11 @@ export type DashboardUser = {
   name: string;
   email: string;
   image?: string | null;
+  /** Legacy dashboard chrome role: ADMIN | INSTRUCTOR | STUDENT */
   role: string;
+  orgRole?: string;
+  orgRoleLabel?: string;
+  organizationName?: string;
 };
 
 const DashboardUserContext = createContext<DashboardUser | null>(null);

@@ -1,22 +1,43 @@
 import { prisma } from "@/lib/db";
-import { cleanString, jsonError, requireSession } from "@/lib/api";
+import { cleanString, jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import { findManagedCourse } from "@/lib/course-access";
 
 type Params = { params: Promise<{ assignmentId: string }> };
 
 export async function GET(_request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
+
   const { assignmentId } = await params;
-  const assignment = await prisma.assignment.findUnique({ where: { id: assignmentId } });
-  if (!assignment) return jsonError("Assignment not found", 404);
-  if (session.user.role === "STUDENT") {
+  const assignment = await prisma.assignment.findUnique({
+    where: { id: assignmentId },
+    include: { course: { select: { organizationId: true, id: true } } },
+  });
+  if (!assignment || assignment.course.organizationId !== tenant.organizationId) {
+    return jsonError("Assignment not found", 404);
+  }
+
+  if (tenant.member?.role === "STUDENT") {
     const submission = await prisma.submission.findUnique({
       where: { assignmentId_studentId: { assignmentId, studentId: session.user.id } },
     });
     return Response.json({ submissions: submission ? [submission] : [] });
   }
-  if (!(await findManagedCourse(assignment.courseId, session))) return jsonError("Forbidden", 403);
+
+  if (
+    !(await findManagedCourse(
+      assignment.courseId,
+      tenant.organizationId,
+      session,
+      tenant.member,
+    ))
+  ) {
+    return jsonError("Forbidden", 403);
+  }
+
   const submissions = await prisma.submission.findMany({
     where: { assignmentId },
     orderBy: { submittedAt: "desc" },
@@ -26,12 +47,22 @@ export async function GET(_request: Request, { params }: Params) {
 }
 
 export async function POST(request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "STUDENT") return jsonError("Forbidden", 403);
+  if (tenant.member?.role !== "STUDENT") return jsonError("Forbidden", 403);
+
   const { assignmentId } = await params;
-  const assignment = await prisma.assignment.findUnique({ where: { id: assignmentId } });
-  if (!assignment) return jsonError("Assignment not found", 404);
+  const assignment = await prisma.assignment.findUnique({
+    where: { id: assignmentId },
+    include: { course: { select: { organizationId: true } } },
+  });
+  if (!assignment || assignment.course.organizationId !== tenant.organizationId) {
+    return jsonError("Assignment not found", 404);
+  }
+
   const enrollment = await prisma.enrollment.findUnique({
     where: { courseId_studentId: { courseId: assignment.courseId, studentId: session.user.id } },
   });

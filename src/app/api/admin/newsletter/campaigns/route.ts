@@ -1,4 +1,4 @@
-import { jsonError, requireSession } from "@/lib/api";
+import { jsonError, requireOrgAdminApi } from "@/lib/api";
 import {
   createNewsletterCampaign,
   listNewsletterCampaigns,
@@ -6,18 +6,16 @@ import {
 } from "@/lib/newsletter";
 
 export async function GET() {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "ADMIN") return jsonError("Forbidden", 403);
+  const auth = await requireOrgAdminApi();
+  if (auth instanceof Response) return auth;
 
-  const campaigns = await listNewsletterCampaigns();
+  const campaigns = await listNewsletterCampaigns(auth.organizationId);
   return Response.json({ campaigns });
 }
 
 export async function POST(request: Request) {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "ADMIN") return jsonError("Forbidden", 403);
+  const auth = await requireOrgAdminApi();
+  if (auth instanceof Response) return auth;
 
   const body = await request.json().catch(() => ({}));
   const action = typeof body.action === "string" ? body.action : "create";
@@ -26,7 +24,7 @@ export async function POST(request: Request) {
     const campaignId = typeof body.campaignId === "string" ? body.campaignId : "";
     if (!campaignId) return jsonError("campaignId is required", 400);
 
-    const result = await sendNewsletterCampaign(campaignId);
+    const result = await sendNewsletterCampaign(auth.organizationId, campaignId);
     if (!result.ok) return jsonError(result.error, result.status);
 
     return Response.json({
@@ -39,9 +37,10 @@ export async function POST(request: Request) {
   const messageBody = typeof body.body === "string" ? body.body : "";
 
   const result = await createNewsletterCampaign({
+    organizationId: auth.organizationId,
     subject,
     body: messageBody,
-    createdById: session.user.id,
+    createdById: auth.session.user.id,
   });
 
   if (!result.ok) return jsonError(result.error, result.status);

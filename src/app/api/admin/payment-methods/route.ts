@@ -1,21 +1,19 @@
-import { cleanString, finiteNumber, jsonError, optionalString, requireSession } from "@/lib/api";
-import { errorMessage } from "@/lib/api";
+import { cleanString, finiteNumber, jsonError, optionalString, errorMessage } from "@/lib/api";
 import { isPaymentMethodType, listAllPaymentMethods } from "@/lib/payment-methods";
 import { prisma } from "@/lib/db";
+import { requireOrgAdminApi } from "@/lib/api";
 
 export async function GET() {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "ADMIN") return jsonError("Forbidden", 403);
+  const auth = await requireOrgAdminApi();
+  if (auth instanceof Response) return auth;
 
-  const methods = await listAllPaymentMethods();
+  const methods = await listAllPaymentMethods(auth.organizationId);
   return Response.json({ methods });
 }
 
 export async function POST(request: Request) {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "ADMIN") return jsonError("Forbidden", 403);
+  const auth = await requireOrgAdminApi();
+  if (auth instanceof Response) return auth;
 
   try {
     const body = await request.json();
@@ -35,6 +33,7 @@ export async function POST(request: Request) {
 
     const method = await prisma.paymentMethod.create({
       data: {
+        organizationId: auth.organizationId,
         type,
         label,
         accountInfo,
@@ -53,16 +52,17 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "ADMIN") return jsonError("Forbidden", 403);
+  const auth = await requireOrgAdminApi();
+  if (auth instanceof Response) return auth;
 
   try {
     const body = await request.json();
     const id = cleanString(body.id, 80);
     if (!id) return jsonError("id is required", 400);
 
-    const existing = await prisma.paymentMethod.findUnique({ where: { id } });
+    const existing = await prisma.paymentMethod.findFirst({
+      where: { id, organizationId: auth.organizationId },
+    });
     if (!existing) return jsonError("Payment method not found", 404);
 
     const typeRaw = body.type !== undefined ? cleanString(body.type, 30) : existing.type;
@@ -101,14 +101,18 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "ADMIN") return jsonError("Forbidden", 403);
+  const auth = await requireOrgAdminApi();
+  if (auth instanceof Response) return auth;
 
   try {
     const body = await request.json();
     const id = cleanString(body.id, 80);
     if (!id) return jsonError("id is required", 400);
+
+    const existing = await prisma.paymentMethod.findFirst({
+      where: { id, organizationId: auth.organizationId },
+    });
+    if (!existing) return jsonError("Payment method not found", 404);
 
     await prisma.paymentMethod.delete({ where: { id } });
     return Response.json({ ok: true });

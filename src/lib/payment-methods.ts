@@ -7,21 +7,24 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethodType, string> = {
   KHALTI_QR: "Khalti QR",
 };
 
-export async function listEnabledPaymentMethods() {
+export async function listEnabledPaymentMethods(organizationId: string) {
   return prisma.paymentMethod.findMany({
-    where: { enabled: true },
+    where: { organizationId, enabled: true },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
 }
 
-export async function listAllPaymentMethods() {
+export async function listAllPaymentMethods(organizationId: string) {
   return prisma.paymentMethod.findMany({
+    where: { organizationId },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
 }
 
-export async function getPaymentMethodById(id: string) {
-  return prisma.paymentMethod.findUnique({ where: { id } });
+export async function getPaymentMethodById(id: string, organizationId?: string) {
+  return prisma.paymentMethod.findFirst({
+    where: organizationId ? { id, organizationId } : { id },
+  });
 }
 
 export function isPaymentMethodType(value: string): value is PaymentMethodType {

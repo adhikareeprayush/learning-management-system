@@ -1,12 +1,17 @@
+import { redirect } from "next/navigation";
 import { listAllPaymentMethods } from "@/lib/payment-methods";
 import { listPaymentsForAdmin } from "@/lib/payments";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
 import AdminPaymentsClient from "./payments-client";
 
 export default async function AdminPaymentsPage() {
+  const ctx = await resolveTenantFromHeaders();
+  if (!ctx) redirect("/login");
+
   const [methods, pendingPayments, recentPayments] = await Promise.all([
-    listAllPaymentMethods(),
-    listPaymentsForAdmin("PENDING"),
-    listPaymentsForAdmin(),
+    listAllPaymentMethods(ctx.organizationId),
+    listPaymentsForAdmin(ctx.organizationId, "PENDING"),
+    listPaymentsForAdmin(ctx.organizationId),
   ]);
 
   return (

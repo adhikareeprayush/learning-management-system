@@ -1,8 +1,10 @@
+import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
+  pgPool?: Pool;
   prismaFingerprint?: string;
 };
 
@@ -26,7 +28,21 @@ function createPrismaClient() {
     throw new Error("DATABASE_URL is not set");
   }
 
-  const adapter = new PrismaPg({ connectionString });
+  // Prefer a shared Pool with IPv4 — Supabase AAAA records are often unreachable
+  // on local networks and cause EHOSTUNREACH refresh storms.
+  const pool =
+    globalForPrisma.pgPool ??
+    new Pool({
+      connectionString,
+      max: 10,
+      connectionTimeoutMillis: 10_000,
+    } as ConstructorParameters<typeof Pool>[0]);
+
+  if (process.env.NODE_ENV !== "production") {
+    globalForPrisma.pgPool = pool;
+  }
+
+  const adapter = new PrismaPg(pool);
   return new PrismaClient({ adapter });
 }
 
@@ -55,7 +71,6 @@ function getPrismaClient() {
     return cached;
   }
 
-  // Drop stale HMR client that predates newer schema models.
   if (cached) {
     void cached.$disconnect().catch(() => undefined);
     globalForPrisma.prisma = undefined;

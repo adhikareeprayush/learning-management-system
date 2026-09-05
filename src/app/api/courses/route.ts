@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getServerSession } from "@/lib/auth";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
+import { jsonError, requireTeacherApi, requireTenantApi } from "@/lib/api";
 
 function formatPrice(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
@@ -16,6 +16,9 @@ function formatDuration(minutes: number) {
 
 export async function GET(request: Request) {
   try {
+    const tenant = await requireTenantApi();
+    if (tenant instanceof Response) return tenant;
+
     const { searchParams } = new URL(request.url);
     const featured = searchParams.get("featured") === "true";
     const q = searchParams.get("q")?.trim().toLowerCase();
@@ -23,6 +26,7 @@ export async function GET(request: Request) {
 
     const courses = await prisma.course.findMany({
       where: {
+        organizationId: tenant.organizationId,
         status: "PUBLISHED",
         ...(featured ? { featured: true } : {}),
         ...(category ? { category } : {}),
@@ -77,16 +81,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    if (
-      session.user.role !== "INSTRUCTOR" &&
-      session.user.role !== "ADMIN"
-    ) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+    const auth = await requireTeacherApi();
+    if (auth instanceof Response) return auth;
 
     const body = await request.json();
     const title = String(body.title ?? "").trim();
@@ -111,12 +107,13 @@ export async function POST(request: Request) {
 
     const course = await prisma.course.create({
       data: {
+        organizationId: auth.organizationId,
         title,
         description: description || null,
         category,
         slug,
         price,
-        instructorId: session.user.id,
+        instructorId: auth.session.user.id,
         status: "DRAFT",
         level: "BEGINNER",
         outcomes: [],

@@ -1,7 +1,7 @@
 import type { PaymentStatus } from "@prisma/client";
-import { cleanString, jsonError, optionalString, requireSession } from "@/lib/api";
-import { errorMessage } from "@/lib/api";
+import { cleanString, jsonError, optionalString, errorMessage } from "@/lib/api";
 import { listPaymentsForAdmin, reviewCoursePayment } from "@/lib/payments";
+import { requireOrgAdminApi } from "@/lib/api";
 
 function parseStatus(value: string | null): PaymentStatus | undefined {
   if (!value) return undefined;
@@ -12,15 +12,14 @@ function parseStatus(value: string | null): PaymentStatus | undefined {
 }
 
 export async function GET(request: Request) {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "ADMIN") return jsonError("Forbidden", 403);
+  const auth = await requireOrgAdminApi();
+  if (auth instanceof Response) return auth;
 
   const { searchParams } = new URL(request.url);
   const status = parseStatus(searchParams.get("status"));
 
   try {
-    const payments = await listPaymentsForAdmin(status);
+    const payments = await listPaymentsForAdmin(auth.organizationId, status);
     return Response.json({ payments });
   } catch (error) {
     console.error("GET /api/admin/payments", error);
@@ -29,9 +28,8 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const session = await requireSession();
-  if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "ADMIN") return jsonError("Forbidden", 403);
+  const auth = await requireOrgAdminApi();
+  if (auth instanceof Response) return auth;
 
   try {
     const body = await request.json();
@@ -44,7 +42,8 @@ export async function PATCH(request: Request) {
     }
 
     const result = await reviewCoursePayment({
-      adminId: session.user.id,
+      organizationId: auth.organizationId,
+      adminId: auth.session.user.id,
       paymentId,
       action,
       rejectionReason: optionalString(body.rejectionReason, 500),

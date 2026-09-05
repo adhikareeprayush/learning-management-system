@@ -1,7 +1,11 @@
 import { listEnabledPaymentMethods } from "@/lib/payment-methods";
+import { requireTenantApi } from "@/lib/api";
 
 export async function GET() {
-  const methods = await listEnabledPaymentMethods();
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
+  const methods = await listEnabledPaymentMethods(tenant.organizationId);
   return Response.json({
     methods: methods.map((method) => ({
       id: method.id,

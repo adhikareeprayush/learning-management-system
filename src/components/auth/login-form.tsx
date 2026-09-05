@@ -14,7 +14,7 @@ import {
 } from "@/lib/enroll-client";
 
 function dashboardForRole(role: string | undefined | null) {
-  if (role === "ADMIN") return "/admin";
+  if (role === "ADMIN" || role === "ORG_ADMIN") return "/admin";
   if (role === "INSTRUCTOR") return "/instructor";
   return "/student";
 }
@@ -48,6 +48,8 @@ export function LoginForm() {
       return;
     }
 
+    await fetch("/api/membership/join", { method: "POST" });
+
     const sessionResult = await authClient.getSession();
     const role = (sessionResult.data?.user as { role?: string } | undefined)
       ?.role;
@@ -64,11 +66,7 @@ export function LoginForm() {
     if (enrollCourseId) {
       const enrollResult = await enrollInCourse(enrollCourseId);
       if (enrollResult.ok && enrollResult.courseSlug) {
-        setFlash(
-          enrollResult.roleChanged
-            ? "Signed in as a student — opening your course…"
-            : "Signed in — opening your course…",
-        );
+        setFlash("Signed in — opening your course…");
         window.location.assign(studentCoursePath(enrollResult.courseSlug));
         return;
       }

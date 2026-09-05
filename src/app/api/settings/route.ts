@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { jsonError, requireSession } from "@/lib/api";
+import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
 
 function preferenceRecord(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -11,8 +11,12 @@ function preferenceRecord(value: unknown) {
 }
 
 export async function GET() {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
+
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
     select: { preferences: true },
@@ -21,8 +25,12 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
+
   const body = await request.json();
   const incoming = preferenceRecord(body.preferences);
   if (Object.keys(incoming).length === 0) return jsonError("No valid preferences supplied", 400);

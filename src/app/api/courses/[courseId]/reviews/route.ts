@@ -9,13 +9,15 @@ import {
   isTeacher,
   jsonError,
   requireSession,
+  requireTenantApi,
 } from "@/lib/api";
 
 type Params = { params: Promise<{ courseId: string }> };
 
-async function resolvePublishedCourse(courseId: string) {
+async function resolvePublishedCourse(courseId: string, organizationId: string) {
   return prisma.course.findFirst({
     where: {
+      organizationId,
       OR: [{ id: courseId }, { slug: courseId }],
       status: "PUBLISHED",
     },
@@ -24,13 +26,17 @@ async function resolvePublishedCourse(courseId: string) {
 }
 
 export async function GET(_request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const { courseId } = await params;
   const session = await requireSession();
 
   let instructorId: string | undefined;
-  if (session && isTeacher(session)) {
+  if (session && isTeacher(session, tenant.member)) {
     const owned = await prisma.course.findFirst({
       where: {
+        organizationId: tenant.organizationId,
         instructorId: session.user.id,
         OR: [{ id: courseId }, { slug: courseId }],
       },
@@ -42,21 +48,24 @@ export async function GET(_request: Request, { params }: Params) {
   const bundle = await getCourseReviewsBundle(
     courseId,
     session?.user.id ?? null,
-    instructorId ? { instructorId } : undefined,
+    instructorId ? { instructorId, organizationId: tenant.organizationId } : { organizationId: tenant.organizationId },
   );
   if (!bundle) return jsonError("Course not found", 404);
   return Response.json(bundle);
 }
 
 export async function POST(request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "STUDENT") {
+  if (tenant.member?.role !== "STUDENT") {
     return jsonError("Only students can submit course reviews", 403);
   }
 
   const { courseId } = await params;
-  const course = await resolvePublishedCourse(courseId);
+  const course = await resolvePublishedCourse(courseId, tenant.organizationId);
   if (!course) return jsonError("Course not found", 404);
 
   const enrollment = await prisma.enrollment.findUnique({
@@ -109,7 +118,9 @@ export async function POST(request: Request, { params }: Params) {
     },
   });
 
-  const bundle = await getCourseReviewsBundle(course.id, session.user.id);
+  const bundle = await getCourseReviewsBundle(course.id, session.user.id, {
+    organizationId: tenant.organizationId,
+  });
 
   return Response.json(
     {
@@ -127,14 +138,17 @@ export async function POST(request: Request, { params }: Params) {
 }
 
 export async function DELETE(_request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (session.user.role !== "STUDENT") {
+  if (tenant.member?.role !== "STUDENT") {
     return jsonError("Forbidden", 403);
   }
 
   const { courseId } = await params;
-  const course = await resolvePublishedCourse(courseId);
+  const course = await resolvePublishedCourse(courseId, tenant.organizationId);
   if (!course) return jsonError("Course not found", 404);
 
   await prisma.review.deleteMany({
@@ -144,6 +158,8 @@ export async function DELETE(_request: Request, { params }: Params) {
     },
   });
 
-  const bundle = await getCourseReviewsBundle(course.id, session.user.id);
+  const bundle = await getCourseReviewsBundle(course.id, session.user.id, {
+    organizationId: tenant.organizationId,
+  });
   return Response.json(bundle);
 }

@@ -13,6 +13,7 @@ import { RoadmapEnrollButton } from "@/components/course/roadmap-enroll-button";
 import { Button } from "@/components/ui/button";
 import { getServerSession } from "@/lib/auth";
 import { formatLevel, getRoadmapDetail } from "@/lib/roadmaps";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
 import {
   coursePaymentAmountPaisa,
   courseRequiresPayment,
@@ -41,9 +42,16 @@ function formatDuration(minutes: number) {
 type Props = { params: Promise<{ roadmapId: string }> };
 
 export default async function RoadmapDetailPage({ params }: Props) {
+  const tenant = await resolveTenantFromHeaders();
+  if (!tenant) notFound();
+
   const { roadmapId } = await params;
   const session = await getServerSession();
-  const roadmap = await getRoadmapDetail(roadmapId, session?.user.id ?? null);
+  const roadmap = await getRoadmapDetail(
+    tenant.organizationId,
+    roadmapId,
+    session?.user.id ?? null,
+  );
   if (!roadmap) notFound();
 
   return (
