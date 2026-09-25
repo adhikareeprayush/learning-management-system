@@ -60,7 +60,7 @@ export function AdminDashboardView({
                 ? "/admin/courses"
                 : stat.id === "enrolled"
                   ? "/admin/reports"
-                  : "/admin/users?q=Instructor";
+                  : "/admin/users?role=INSTRUCTOR";
           return (
             <Link key={stat.id} href={href} className="block min-w-0">
               <StatsCard
@@ -210,7 +210,7 @@ export function AdminDashboardView({
               {moderationQueue.slice(0, 3).map((item) => (
                 <li key={item.id}>
                   <Link
-                    href={`/admin/moderation?id=${item.id}`}
+                    href={`/admin/courses/${item.id}`}
                     className="block rounded-xl border border-black/5 p-3 transition hover:border-brand-purple/25 hover:bg-surface/70"
                   >
                     <div className="flex items-start justify-between gap-2">

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { BookOpen, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { BookOpen, Info, Search } from "lucide-react";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { FlashBanner } from "@/components/ui/flash-banner";
 
@@ -14,7 +14,8 @@ export type AdminCourse = {
   title: string;
   category: string;
   instructor: string;
-  priceCents: number;
+  /** Pre-formatted with formatCoursePrice (NPR). */
+  price: string;
   students: number;
   lessons: number;
   status: CourseStatus;
@@ -40,12 +41,17 @@ export default function AdminCoursesClient({
   initialStatus = "ALL",
   title = "Courses",
   subtitle = "Review and manage every course on the platform.",
+  highlightId,
+  emptyMessage = "No courses yet.",
 }: {
   initialCourses: AdminCourse[];
   initialQuery?: string;
   initialStatus?: "ALL" | CourseStatus;
   title?: string;
   subtitle?: string;
+  /** Course to scroll to and highlight (e.g. from a dashboard link). */
+  highlightId?: string;
+  emptyMessage?: string;
 }) {
   const [query, setQuery] = useState(initialQuery);
   const [status, setStatus] = useState<"ALL" | CourseStatus>(initialStatus);
@@ -53,6 +59,32 @@ export default function AdminCoursesClient({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const highlightMissing = Boolean(
+    highlightId &&
+      !initialCourses.some(
+        (course) => course.id === highlightId || course.slug === highlightId,
+      ),
+  );
+
+  useEffect(() => {
+    if (!highlightId) return;
+    // Mobile cards and desktop rows both carry the id; scroll to the visible one.
+    const target = [
+      ...document.querySelectorAll<HTMLElement>("[data-course-row]"),
+    ].find(
+      (node) =>
+        node.dataset.courseRow === highlightId && node.offsetParent !== null,
+    );
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlightId]);
+
+  function isHighlighted(course: AdminCourse) {
+    return (
+      Boolean(highlightId) &&
+      (course.id === highlightId || course.slug === highlightId)
+    );
+  }
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -122,14 +154,12 @@ export default function AdminCoursesClient({
             Restore
           </button>
         ) : null}
-        {course.status === "PUBLISHED" ? (
-          <Link
-            href={`/courses/${course.slug}`}
-            className="rounded-lg border border-black/8 px-2.5 py-1 text-xs font-semibold text-brand-navy hover:bg-surface"
-          >
-            View
-          </Link>
-        ) : null}
+        <Link
+          href={`/admin/courses/${course.id}`}
+          className="rounded-lg border border-black/8 px-2.5 py-1 text-xs font-semibold text-brand-navy hover:bg-surface"
+        >
+          {course.status === "IN_REVIEW" ? "Review" : "View"}
+        </Link>
       </div>
     );
   }
@@ -139,6 +169,20 @@ export default function AdminCoursesClient({
       <DashboardHeader title={title} subtitle={subtitle} />
       <FlashBanner message={flash} onDismiss={() => setFlash(null)} />
       {error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p> : null}
+      {highlightMissing ? (
+        <p className="flex items-start gap-2 rounded-xl border border-brand-purple/15 bg-[#f7f5ff] px-4 py-3 text-sm text-brand-navy">
+          <Info className="mt-0.5 size-4 shrink-0 text-brand-purple" />
+          <span>
+            That course is no longer waiting for review.{" "}
+            <Link
+              href={`/admin/courses/${highlightId}`}
+              className="font-semibold text-brand-purple hover:text-brand-teal"
+            >
+              Open the course
+            </Link>
+          </span>
+        </p>
+      ) : null}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2 text-sm text-muted"><BookOpen className="size-4 text-brand-purple" /><span><strong className="text-brand-navy">{filtered.length}</strong> courses shown</span></div>
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -150,7 +194,12 @@ export default function AdminCoursesClient({
         {filtered.map((course) => (
           <article
             key={course.id}
-            className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]"
+            data-course-row={course.id}
+            className={`rounded-2xl border bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] ${
+              isHighlighted(course)
+                ? "border-brand-purple/40 ring-2 ring-brand-purple/20"
+                : "border-black/5"
+            }`}
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -170,7 +219,7 @@ export default function AdminCoursesClient({
               </div>
               <div>
                 <dt className="font-medium text-[#324361]">Price</dt>
-                <dd>${(course.priceCents / 100).toFixed(2)}</dd>
+                <dd>{course.price}</dd>
               </div>
               <div className="col-span-2">
                 <dt className="font-medium text-[#324361]">Content</dt>
@@ -202,18 +251,26 @@ export default function AdminCoursesClient({
               {filtered.map((course) => (
                 <tr
                   key={course.id}
-                  className="border-t border-black/5 hover:bg-surface/50"
+                  data-course-row={course.id}
+                  className={`border-t border-black/5 ${
+                    isHighlighted(course)
+                      ? "bg-brand-purple/5"
+                      : "hover:bg-surface/50"
+                  }`}
                 >
                   <td className="px-5 py-4 font-medium text-[#324361]">
-                    {course.title}
+                    <Link
+                      href={`/admin/courses/${course.id}`}
+                      className="hover:text-brand-purple"
+                    >
+                      {course.title}
+                    </Link>
                   </td>
                   <td className="px-5 py-4 text-muted">{course.instructor}</td>
                   <td className="px-5 py-4 text-muted">
                     {course.category || "—"}
                   </td>
-                  <td className="px-5 py-4 text-muted">
-                    ${(course.priceCents / 100).toFixed(2)}
-                  </td>
+                  <td className="px-5 py-4 text-muted">{course.price}</td>
                   <td className="px-5 py-4 text-muted">
                     {course.lessons} lessons · {course.students} students
                   </td>
@@ -231,7 +288,13 @@ export default function AdminCoursesClient({
           </table>
         </div>
       </div>
-      {filtered.length === 0 ? <p className="text-center text-sm text-muted">No courses match these filters.</p> : null}
+      {filtered.length === 0 ? (
+        <p className="text-center text-sm text-muted">
+          {query.trim() || status !== initialStatus
+            ? "No courses match these filters."
+            : emptyMessage}
+        </p>
+      ) : null}
     </div>
   );
 }

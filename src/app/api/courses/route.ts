@@ -2,16 +2,32 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { jsonError, requireTeacherApi, requireTenantApi } from "@/lib/api";
+import type { CatalogApiCourse } from "@/lib/catalog-filters";
+import {
+  coursePaymentAmountPaisa,
+  courseRequiresPayment,
+  formatCoursePrice,
+} from "@/lib/pricing";
 
-function formatPrice(cents: number) {
-  return `$${(cents / 100).toFixed(2)}`;
-}
+// Stays well below Postgres int4 max so a typo can't overflow the column.
+const MAX_MINOR_UNITS = 1_000_000_000;
 
 function formatDuration(minutes: number) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   if (h <= 0) return `${m}m`;
   return `${h}h ${m.toString().padStart(2, "0")}m`;
+}
+
+/** Prices are integer minor units (cents / paisa); anything else is rejected. */
+function parseMinorUnits(value: unknown) {
+  if (value === undefined || value === null || value === "") return 0;
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= MAX_MINOR_UNITS
+    ? value
+    : null;
 }
 
 export async function GET(request: Request) {
@@ -44,38 +60,57 @@ export async function GET(request: Request) {
       include: {
         instructor: { select: { id: true, name: true } },
         _count: {
-          select: { enrollments: true, lessons: true },
+          select: { enrollments: true, lessons: true, reviews: true },
         },
       },
     });
 
-    const data = courses.map((course) => ({
-      id: course.id,
-      slug: course.slug,
-      title: course.title,
-      description: course.description,
-      category: course.category,
-      image: resolveMediaUrl(course.thumbnail),
-      instructor: course.instructor.name,
-      instructorId: course.instructor.id,
-      level: course.level,
-      price: formatPrice(course.price),
-      priceValue: course.price / 100,
-      duration: formatDuration(course.duration),
-      students: `${course._count.enrollments.toLocaleString()} Students`,
-      studentCount: course._count.enrollments,
-      lessonCount: course._count.lessons,
-      featured: course.featured,
-      outcomes: course.outcomes,
-    }));
+    const ratings = courses.length
+      ? await prisma.review.groupBy({
+          by: ["courseId"],
+          where: { courseId: { in: courses.map((course) => course.id) } },
+          _avg: { rating: true },
+        })
+      : [];
+    const averageByCourse = new Map(
+      ratings.map((row) => [row.courseId, row._avg.rating]),
+    );
+
+    const data = courses.map((course): CatalogApiCourse => {
+      const average = averageByCourse.get(course.id);
+      return {
+        id: course.id,
+        slug: course.slug,
+        title: course.title,
+        description: course.description,
+        category: course.category,
+        image: resolveMediaUrl(course.thumbnail),
+        instructor: course.instructor.name,
+        instructorId: course.instructor.id,
+        level: course.level,
+        price: formatCoursePrice(course),
+        pricePaisa: courseRequiresPayment(course)
+          ? coursePaymentAmountPaisa(course)
+          : 0,
+        duration: formatDuration(course.duration),
+        students: `${course._count.enrollments.toLocaleString()} Students`,
+        studentCount: course._count.enrollments,
+        lessonCount: course._count.lessons,
+        featured: course.featured,
+        outcomes: course.outcomes,
+        averageRating:
+          course._count.reviews > 0 && average != null
+            ? Math.round(average * 10) / 10
+            : null,
+        reviewCount: course._count.reviews,
+        createdAt: course.createdAt.toISOString(),
+      };
+    });
 
     return NextResponse.json({ courses: data });
   } catch (error) {
     console.error("GET /api/courses", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    return jsonError("Internal server error", 500);
   }
 }
 
@@ -84,18 +119,29 @@ export async function POST(request: Request) {
     const auth = await requireTeacherApi();
     if (auth instanceof Response) return auth;
 
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object") {
+      return jsonError("Invalid JSON body", 400);
+    }
     const title = String(body.title ?? "").trim();
     const description = String(body.description ?? "").trim();
     const category = String(body.category ?? "General").trim();
-    const priceRaw = Number(body.price ?? 0);
-    const price =
-      Number.isFinite(priceRaw) && priceRaw >= 0
-        ? Math.round(priceRaw * (priceRaw < 1000 ? 100 : 1))
-        : 0;
 
     if (!title) {
-      return NextResponse.json({ error: "title is required" }, { status: 400 });
+      return jsonError("title is required", 400);
+    }
+
+    const price = parseMinorUnits(body.price);
+    if (price === null) {
+      return jsonError("price must be a whole number of cents (0 or more)", 400);
+    }
+
+    const priceNpr = parseMinorUnits(body.priceNpr);
+    if (priceNpr === null || (priceNpr > 0 && priceNpr < 1000)) {
+      return jsonError(
+        "priceNpr must be 0 (free) or at least 1000 paisa (Rs 10)",
+        400,
+      );
     }
 
     const baseSlug = title
@@ -113,6 +159,7 @@ export async function POST(request: Request) {
         category,
         slug,
         price,
+        priceNpr,
         instructorId: auth.session.user.id,
         status: "DRAFT",
         level: "BEGINNER",
@@ -123,9 +170,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ course }, { status: 201 });
   } catch (error) {
     console.error("POST /api/courses", error);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    return jsonError("Internal server error", 500);
   }
 }

@@ -846,7 +846,7 @@ export const paymentMethodSeed = [
     id: "seed-payment-mobile-banking",
     type: "MOBILE_BANKING" as const,
     label: "Mobile Banking (NMB)",
-    accountInfo: "0123456789012345 · Edujarr Learning Pvt. Ltd.",
+    accountInfo: "0123456789012345 · Convolution Labs Pvt. Ltd.",
     instructions: "Transfer via mobile banking and upload the confirmation screenshot.",
     qrImageUrl: null,
     enabled: true,
@@ -856,7 +856,7 @@ export const paymentMethodSeed = [
     id: "seed-payment-khalti-qr",
     type: "KHALTI_QR" as const,
     label: "Khalti QR",
-    accountInfo: "edujarr@khalti",
+    accountInfo: "convolutionlabs@khalti",
     instructions: "Scan the Khalti QR (upload one in Admin → Payments) and screenshot the success screen.",
     qrImageUrl: null,
     enabled: true,
@@ -883,10 +883,10 @@ export const newsletterSubscriberSeed = [
 export const newsletterCampaignSeed = [
   {
     id: "seed-campaign-welcome",
-    subject: "Welcome to Edujarr — your learning path starts here",
+    subject: "Welcome to Convolution LMS — your learning path starts here",
     body: `Hi there,
 
-Thanks for subscribing to Edujarr updates. Each month we share new courses, roadmaps, and practical tips from working instructors.
+Thanks for subscribing to Convolution LMS updates. Each month we share new courses, roadmaps, and practical tips from working instructors.
 
 This month highlights:
 • Web Developer Starter — 3 courses, one path certificate
@@ -896,7 +896,7 @@ This month highlights:
 Browse roadmaps: /roadmaps
 
 Happy learning,
-The Edujarr team`,
+The Convolution LMS team`,
     status: "SENT" as const,
     sentDaysAgo: 12,
   },
@@ -905,7 +905,7 @@ The Edujarr team`,
     subject: "August picks: Design systems & creator marketing",
     body: `Hello,
 
-August on Edujarr is all about shipping polished work:
+August on Convolution LMS is all about shipping polished work:
 
 1. UI Design Systems — tokens, components, dev handoff
 2. Content Strategy for Creators — newsletters that grow your list
@@ -913,7 +913,7 @@ August on Edujarr is all about shipping polished work:
 
 Reply and tell us what you'd like to learn next.
 
-— Sam, Edujarr`,
+— Sam, Convolution LMS`,
     status: "DRAFT" as const,
   },
 ];

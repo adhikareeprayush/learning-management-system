@@ -9,6 +9,7 @@ import {
   enrollInRoadmap,
   loginWithRoadmapPath,
   registerWithRoadmapPath,
+  roadmapEnrollMessage,
   studentRoadmapPath,
 } from "@/lib/enroll-client";
 
@@ -60,11 +61,7 @@ export function RoadmapEnrollButton({
         throw new Error(result.error ?? "Enrollment failed");
       }
 
-      setFlash(
-        result.alreadyEnrolled
-          ? "You're already on this roadmap — opening it…"
-          : `Enrolled in ${courseCount} course${courseCount === 1 ? "" : "s"} — opening roadmap…`,
-      );
+      setFlash(roadmapEnrollMessage(result));
       window.location.assign(studentRoadmapPath(result.roadmapSlug));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Enrollment failed");
@@ -77,7 +74,7 @@ export function RoadmapEnrollButton({
     <div className="space-y-2">
       <FlashBanner message={flash} onDismiss={() => setFlash(null)} />
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      <Button onClick={enroll} disabled={loading} className="w-full sm:w-auto">
+      <Button onClick={enroll} loading={loading} className="w-full sm:w-auto">
         {loading
           ? "Starting…"
           : `Start roadmap · ${courseCount} course${courseCount === 1 ? "" : "s"}`}

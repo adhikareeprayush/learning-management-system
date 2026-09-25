@@ -26,15 +26,23 @@ export async function ensureStudentMembership(
     select: { role: true },
   });
 
-  const member = await prisma.organizationMember.create({
-    data: {
-      organizationId,
-      userId,
-      role: mapLegacyRoleToOrgRole(user?.role ?? "STUDENT"),
-    },
-  });
-
-  return { ok: true, member, created: true };
+  try {
+    const member = await prisma.organizationMember.create({
+      data: {
+        organizationId,
+        userId,
+        role: mapLegacyRoleToOrgRole(user?.role ?? "STUDENT"),
+      },
+    });
+    return { ok: true, member, created: true };
+  } catch (error) {
+    // Parallel requests (e.g. login + first enroll) can race on the unique key.
+    const raced = await prisma.organizationMember.findUnique({
+      where: { organizationId_userId: { organizationId, userId } },
+    });
+    if (raced) return { ok: true, member: raced, created: false };
+    throw error;
+  }
 }
 
 export async function ensureMembershipForEnrollment(
@@ -42,6 +50,22 @@ export async function ensureMembershipForEnrollment(
   userId: string,
 ): Promise<EnsureMembershipResult> {
   return ensureStudentMembership(organizationId, userId);
+}
+
+/**
+ * Membership to use for learner-only actions (progress, quizzes, submissions,
+ * reviews). The /student area gates on `user.role`, so a student who predates
+ * org membership gets a row created here instead of a 403.
+ */
+export async function resolveLearnerMember(
+  organizationId: string,
+  user: { id: string; role?: string | null },
+  member: OrganizationMember | null,
+): Promise<OrganizationMember | null> {
+  if (member) return member;
+  if ((user.role ?? "STUDENT") !== "STUDENT") return null;
+  const result = await ensureStudentMembership(organizationId, user.id);
+  return result.ok ? result.member : null;
 }
 
 export function membershipRole(

@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { FlashBanner } from "@/components/ui/flash-banner";
 import { authClient } from "@/lib/auth-client";
 import {
+  coursePurchasePath,
   enrollInCourse,
   enrollInRoadmap,
+  roadmapEnrollMessage,
   studentCoursePath,
   studentRoadmapPath,
 } from "@/lib/enroll-client";
@@ -18,6 +20,7 @@ export function RegisterForm() {
   const searchParams = useSearchParams();
   const enrollCourseId = searchParams.get("enroll");
   const roadmapId = searchParams.get("roadmap");
+  const courseSlug = searchParams.get("slug");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -56,7 +59,7 @@ export function RegisterForm() {
     if (roadmapId) {
       const result = await enrollInRoadmap(roadmapId);
       if (result.ok && result.roadmapSlug) {
-        setFlash("Account created — opening your roadmap…");
+        setFlash(roadmapEnrollMessage(result));
         window.location.assign(studentRoadmapPath(result.roadmapSlug));
         return;
       }
@@ -67,6 +70,11 @@ export function RegisterForm() {
       if (enrollResult.ok && enrollResult.courseSlug) {
         setFlash("Account created — opening your course…");
         window.location.assign(studentCoursePath(enrollResult.courseSlug));
+        return;
+      }
+      if (enrollResult.paymentRequired) {
+        setFlash("Account created — opening checkout…");
+        window.location.assign(coursePurchasePath(courseSlug || enrollCourseId));
         return;
       }
     }
@@ -119,7 +127,7 @@ export function RegisterForm() {
           className="w-full rounded-[10px] border border-black/10 bg-surface/50 px-4 py-3 outline-none ring-brand-purple focus:ring-2"
         />
       </label>
-      <Button submit className="w-full" disabled={loading}>
+      <Button submit className="w-full" loading={loading}>
         {loading ? "Creating account…" : "Create account"}
       </Button>
       {error ? <p className="text-center text-sm text-red-500">{error}</p> : null}
@@ -128,9 +136,9 @@ export function RegisterForm() {
         <Link
           href={
             roadmapId
-              ? `/login?roadmap=${encodeURIComponent(roadmapId)}${searchParams.get("slug") ? `&slug=${encodeURIComponent(searchParams.get("slug")!)}` : ""}`
+              ? `/login?roadmap=${encodeURIComponent(roadmapId)}${courseSlug ? `&slug=${encodeURIComponent(courseSlug)}` : ""}`
               : enrollCourseId
-                ? `/login?enroll=${encodeURIComponent(enrollCourseId)}${searchParams.get("slug") ? `&slug=${encodeURIComponent(searchParams.get("slug")!)}` : ""}`
+                ? `/login?enroll=${encodeURIComponent(enrollCourseId)}${courseSlug ? `&slug=${encodeURIComponent(courseSlug)}` : ""}`
                 : "/login"
           }
           className="font-semibold text-brand-purple"

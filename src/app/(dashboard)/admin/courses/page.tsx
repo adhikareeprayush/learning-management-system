@@ -1,40 +1,22 @@
-import { Suspense } from "react";
+import { redirect } from "next/navigation";
+import { requireAdminPage } from "@/lib/page-guards";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
+import { loadAdminCourses } from "./course-rows";
 import AdminCoursesClient from "./courses-client";
-import { prisma } from "@/lib/db";
 
 type Props = { searchParams: Promise<{ q?: string }> };
 
 export default async function AdminCoursesPage({ searchParams }: Props) {
+  await requireAdminPage();
+
+  const ctx = await resolveTenantFromHeaders();
+  if (!ctx) redirect("/login");
+
   const { q = "" } = await searchParams;
-  const courses = await prisma.course.findMany({
-    orderBy: { updatedAt: "desc" },
-    include: {
-      instructor: { select: { name: true } },
-      _count: { select: { lessons: true, enrollments: true } },
-    },
-  });
+  const courses = await loadAdminCourses(ctx.organizationId);
+
   return (
-    <Suspense
-      fallback={
-        <div className="rounded-2xl border border-black/5 bg-white p-8 text-sm text-muted">
-          Loading courses…
-        </div>
-      }
-    >
-      <AdminCoursesClient
-        initialQuery={q}
-        initialCourses={courses.map((course) => ({
-          id: course.id,
-          slug: course.slug,
-          title: course.title,
-          category: course.category ?? "",
-          instructor: course.instructor.name,
-          priceCents: course.price,
-          students: course._count.enrollments,
-          lessons: course._count.lessons,
-          status: course.status,
-        }))}
-      />
-    </Suspense>
+    // Remount on navigation so the search box follows ?q= from the toolbar.
+    <AdminCoursesClient key={q} initialQuery={q} initialCourses={courses} />
   );
 }

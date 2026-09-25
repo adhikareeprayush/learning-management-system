@@ -1,17 +1,26 @@
 import { redirect } from "next/navigation";
+import { listAdminPayments } from "@/lib/dashboard-data";
+import { prisma } from "@/lib/db";
+import { requireAdminPage } from "@/lib/page-guards";
 import { listAllPaymentMethods } from "@/lib/payment-methods";
-import { listPaymentsForAdmin } from "@/lib/payments";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 import AdminPaymentsClient from "./payments-client";
 
+const PENDING_LIMIT = 100;
+
 export default async function AdminPaymentsPage() {
+  await requireAdminPage();
+
   const ctx = await resolveTenantFromHeaders();
   if (!ctx) redirect("/login");
 
-  const [methods, pendingPayments, recentPayments] = await Promise.all([
+  const [methods, pending, pendingTotal, history] = await Promise.all([
     listAllPaymentMethods(ctx.organizationId),
-    listPaymentsForAdmin(ctx.organizationId, "PENDING"),
-    listPaymentsForAdmin(ctx.organizationId),
+    listAdminPayments(ctx.organizationId, { status: "PENDING", take: PENDING_LIMIT }),
+    prisma.payment.count({
+      where: { status: "PENDING", course: { organizationId: ctx.organizationId } },
+    }),
+    listAdminPayments(ctx.organizationId, { status: "REVIEWED" }),
   ]);
 
   return (
@@ -26,31 +35,10 @@ export default async function AdminPaymentsPage() {
         enabled: method.enabled,
         sortOrder: method.sortOrder,
       }))}
-      initialPending={pendingPayments.map((payment) => ({
-        id: payment.id,
-        amount: payment.amount,
-        status: payment.status,
-        screenshotUrl: payment.screenshotUrl,
-        referenceNote: payment.referenceNote,
-        createdAt: payment.createdAt.toISOString(),
-        user: payment.user,
-        course: payment.course,
-        paymentMethod: payment.paymentMethod,
-      }))}
-      initialRecent={recentPayments.slice(0, 20).map((payment) => ({
-        id: payment.id,
-        amount: payment.amount,
-        status: payment.status,
-        screenshotUrl: payment.screenshotUrl,
-        referenceNote: payment.referenceNote,
-        rejectionReason: payment.rejectionReason,
-        createdAt: payment.createdAt.toISOString(),
-        reviewedAt: payment.reviewedAt?.toISOString() ?? null,
-        user: payment.user,
-        course: payment.course,
-        paymentMethod: payment.paymentMethod,
-        reviewedBy: payment.reviewedBy,
-      }))}
+      initialPending={pending.payments}
+      initialPendingTotal={pendingTotal}
+      initialHistory={history.payments}
+      initialHistoryHasMore={history.hasMore}
     />
   );
 }

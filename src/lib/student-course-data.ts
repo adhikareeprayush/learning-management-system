@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
+import { redactResourceForLearner } from "@/lib/lesson-resources";
 
 function formatDuration(minutes: number) {
   const h = Math.floor(minutes / 60);
@@ -27,14 +28,7 @@ export async function getEnrolledStudentCourse(
           instructor: { select: { name: true } },
           modules: {
             orderBy: { order: "asc" },
-            include: {
-              lessons: {
-                orderBy: { order: "asc" },
-                include: {
-                  resources: { orderBy: { createdAt: "asc" } },
-                },
-              },
-            },
+            select: { id: true, title: true },
           },
           lessons: {
             orderBy: { order: "asc" },
@@ -50,10 +44,9 @@ export async function getEnrolledStudentCourse(
   if (!enrollment) return null;
 
   const course = enrollment.course;
-  const allLessons =
-    course.modules.length > 0
-      ? course.modules.flatMap((m) => m.lessons)
-      : course.lessons;
+  // Every lesson in the course counts toward progress and the certificate
+  // (see PATCH /api/lessons/[lessonId]), so the player must list all of them.
+  const allLessons = course.lessons;
 
   const progressRows = await prisma.lessonProgress.findMany({
     where: {
@@ -95,12 +88,13 @@ export async function getEnrolledStudentCourse(
   ) {
     return resources.map((resource) => {
       const attempt = latestAttemptByResource.get(resource.id);
+      const safe = redactResourceForLearner(resource);
       return {
-        id: resource.id,
-        type: resource.type as "VIDEO" | "TEXT" | "EXERCISE" | "QUIZ",
-        title: resource.title,
-        url: resource.url,
-        description: resource.description,
+        id: safe.id,
+        type: safe.type as "VIDEO" | "TEXT" | "EXERCISE" | "QUIZ",
+        title: safe.title,
+        url: safe.url,
+        description: safe.description,
         latestAttempt: attempt
           ? {
               score: attempt.score,
@@ -112,40 +106,53 @@ export async function getEnrolledStudentCourse(
     });
   }
 
+  function mapLesson(lesson: (typeof allLessons)[number]) {
+    return {
+      id: lesson.id,
+      title: lesson.title,
+      duration: formatDuration(lesson.duration),
+      videoUrl: lesson.videoUrl ?? "",
+      summary: lesson.summary ?? "",
+      content: lesson.content
+        ? lesson.content.split(/\n\n+/).filter(Boolean)
+        : [],
+      completed: completedIds.has(lesson.id),
+      resources: mapResources(lesson.resources),
+    };
+  }
+
+  const moduleIds = new Set(course.modules.map((m) => m.id));
+  const unassigned = allLessons.filter(
+    (lesson) => !lesson.moduleId || !moduleIds.has(lesson.moduleId),
+  );
+
   const modules =
     course.modules.length > 0
-      ? course.modules.map((mod) => ({
-          id: mod.id,
-          title: mod.title,
-          lessons: mod.lessons.map((lesson) => ({
-            id: lesson.id,
-            title: lesson.title,
-            duration: formatDuration(lesson.duration),
-            videoUrl: lesson.videoUrl ?? "",
-            summary: lesson.summary ?? "",
-            content: lesson.content
-              ? lesson.content.split(/\n\n+/).filter(Boolean)
-              : [],
-            completed: completedIds.has(lesson.id),
-            resources: mapResources(lesson.resources),
-          })),
-        }))
+      ? [
+          ...course.modules
+            .map((mod) => ({
+              id: mod.id,
+              title: mod.title,
+              lessons: allLessons
+                .filter((lesson) => lesson.moduleId === mod.id)
+                .map(mapLesson),
+            }))
+            .filter((mod) => mod.lessons.length > 0),
+          ...(unassigned.length > 0
+            ? [
+                {
+                  id: "other",
+                  title: "Other lessons",
+                  lessons: unassigned.map(mapLesson),
+                },
+              ]
+            : []),
+        ]
       : [
           {
             id: "all",
             title: "Lessons",
-            lessons: course.lessons.map((lesson) => ({
-              id: lesson.id,
-              title: lesson.title,
-              duration: formatDuration(lesson.duration),
-              videoUrl: lesson.videoUrl ?? "",
-              summary: lesson.summary ?? "",
-              content: lesson.content
-                ? lesson.content.split(/\n\n+/).filter(Boolean)
-                : [],
-              completed: completedIds.has(lesson.id),
-              resources: mapResources(lesson.resources),
-            })),
+            lessons: allLessons.map(mapLesson),
           },
         ];
 

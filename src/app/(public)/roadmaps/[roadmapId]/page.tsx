@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import {
   Award,
@@ -5,32 +6,18 @@ import {
   CheckCircle2,
   Clock,
   Circle,
-  Map,
+  Map as MapIcon,
 } from "lucide-react";
 import { notFound } from "next/navigation";
 import { EnrollButton } from "@/components/course/enroll-button";
 import { RoadmapEnrollButton } from "@/components/course/roadmap-enroll-button";
 import { Button } from "@/components/ui/button";
 import { getServerSession } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import { formatLevel, getRoadmapDetail } from "@/lib/roadmaps";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
-import {
-  coursePaymentAmountPaisa,
-  courseRequiresPayment,
-  formatNprFromPaisa,
-} from "@/lib/pricing";
+import { courseRequiresPayment, formatCoursePrice } from "@/lib/pricing";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
-
-function formatPrice(cents: number) {
-  return `$${(cents / 100).toFixed(2)}`;
-}
-
-function coursePriceLabel(course: { price: number; priceNpr: number }) {
-  if (courseRequiresPayment(course)) {
-    return formatNprFromPaisa(coursePaymentAmountPaisa(course));
-  }
-  return formatPrice(course.price);
-}
 
 function formatDuration(minutes: number) {
   const h = Math.floor(minutes / 60);
@@ -53,6 +40,38 @@ export default async function RoadmapDetailPage({ params }: Props) {
     session?.user.id ?? null,
   );
   if (!roadmap) notFound();
+
+  // Latest payment per not-yet-enrolled paid course, so a pending review isn't offered "Enroll" again.
+  const paidCourseIds = roadmap.courses
+    .filter((course) => !course.enrolled && courseRequiresPayment(course))
+    .map((course) => course.id);
+  const payments =
+    session && paidCourseIds.length > 0
+      ? await prisma.payment.findMany({
+          where: { userId: session.user.id, courseId: { in: paidCourseIds } },
+          orderBy: { createdAt: "desc" },
+          select: { courseId: true, status: true, rejectionReason: true },
+        })
+      : [];
+  const latestPayment = new Map<string, (typeof payments)[number]>();
+  for (const payment of payments) {
+    if (!latestPayment.has(payment.courseId)) {
+      latestPayment.set(payment.courseId, payment);
+    }
+  }
+  function paymentStateFor(courseId: string) {
+    const payment = latestPayment.get(courseId);
+    if (payment?.status === "PENDING") {
+      return { paymentStatus: "pending" as const, rejectionReason: null };
+    }
+    if (payment?.status === "FAILED") {
+      return {
+        paymentStatus: "rejected" as const,
+        rejectionReason: payment.rejectionReason,
+      };
+    }
+    return { paymentStatus: "none" as const, rejectionReason: null };
+  }
 
   return (
     <div className="bg-[#f7f8fc] pb-20">
@@ -112,14 +131,16 @@ export default async function RoadmapDetailPage({ params }: Props) {
 
           <div className="overflow-hidden rounded-3xl border border-black/5 bg-[#0b0a2e] shadow-xl">
             <div className="relative aspect-video">
-              <img
+              <Image
                 src={roadmap.thumbnail}
                 alt=""
-                className="size-full object-cover opacity-90"
+                fill
+                sizes="(max-width: 1024px) 100vw, 50vw"
+                className="object-cover opacity-90"
               />
               <div className="absolute inset-0 flex items-center justify-center bg-brand-navy/25">
                 <span className="flex size-16 items-center justify-center rounded-full bg-white/95 text-brand-navy shadow-lg">
-                  <Map className="size-8" />
+                  <MapIcon className="size-8" />
                 </span>
               </div>
             </div>
@@ -166,9 +187,11 @@ export default async function RoadmapDetailPage({ params }: Props) {
                       <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-surface text-sm font-bold text-brand-navy">
                         {index + 1}
                       </span>
-                      <img
+                      <Image
                         src={resolveMediaUrl(course.thumbnail)}
                         alt=""
+                        width={64}
+                        height={64}
                         className="hidden size-16 rounded-xl object-cover sm:block"
                       />
                       <div className="min-w-0 flex-1">
@@ -188,7 +211,7 @@ export default async function RoadmapDetailPage({ params }: Props) {
                         <p className="mt-1 text-xs text-muted sm:text-sm">
                           {course.instructorName} ·{" "}
                           {formatDuration(course.duration)} ·{" "}
-                          {formatPrice(course.price)}
+                          {formatCoursePrice(course)}
                         </p>
                         {course.enrolled ? (
                           <p className="mt-1 text-xs font-medium text-brand-teal">
@@ -216,8 +239,9 @@ export default async function RoadmapDetailPage({ params }: Props) {
                           courseId={course.id}
                           slug={course.slug}
                           courseTitle={course.title}
-                          priceLabel={coursePriceLabel(course)}
+                          priceLabel={formatCoursePrice(course)}
                           requiresPayment={courseRequiresPayment(course)}
+                          {...paymentStateFor(course.id)}
                         />
                       )}
                     </div>

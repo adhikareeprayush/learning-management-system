@@ -1,10 +1,17 @@
+import { redirect } from "next/navigation";
 import { Logo } from "@/components/layout/logo";
+import { getServerSession } from "@/lib/auth";
+import { homeForRole } from "@/lib/page-guards";
 
-export default function AuthLayout({
+export default async function AuthLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  // A failed session lookup (e.g. DB hiccup) should still render the form.
+  const session = await getServerSession().catch(() => null);
+  if (session) redirect(homeForRole(session.user.role));
+
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
       <div className="relative hidden overflow-hidden bg-hero-gradient lg:block">
@@ -16,10 +23,10 @@ export default function AuthLayout({
               Good coaching is good teaching.
             </h1>
             <p className="mt-4 max-w-md text-white/75">
-              Sign in to continue your learning path on Edujarr.
+              Sign in to continue your learning path on Convolution LMS.
             </p>
           </div>
-          <p className="text-sm text-white/50">Edujarr LMS</p>
+          <p className="text-sm text-white/50">Convolution LMS</p>
         </div>
       </div>
       <div className="flex items-center justify-center bg-white px-4 py-10 sm:px-6 sm:py-12">

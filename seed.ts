@@ -91,6 +91,34 @@ async function upsertUserWithPassword(input: {
   return user;
 }
 
+// Databases seeded before the Convolution rebrand have the org and admin under
+// the old names. Rename in place so courses, memberships and history carry
+// over instead of the upserts creating empty duplicates.
+async function renameLegacyOrg(from: string, to: string) {
+  const [legacy, current] = await Promise.all([
+    prisma.organization.findUnique({ where: { slug: from }, select: { id: true } }),
+    prisma.organization.findUnique({ where: { slug: to }, select: { id: true } }),
+  ]);
+  if (legacy && !current) {
+    await prisma.organization.update({
+      where: { id: legacy.id },
+      data: { slug: to, subdomain: to },
+    });
+    console.log(`Renamed organization ${from} -> ${to}`);
+  }
+}
+
+async function renameLegacyEmail(from: string, to: string) {
+  const [legacy, current] = await Promise.all([
+    prisma.user.findUnique({ where: { email: from }, select: { id: true } }),
+    prisma.user.findUnique({ where: { email: to }, select: { id: true } }),
+  ]);
+  if (legacy && !current) {
+    await prisma.user.update({ where: { id: legacy.id }, data: { email: to } });
+    console.log(`Renamed ${from} -> ${to}`);
+  }
+}
+
 async function completeLessonsForStudent(
   studentId: string,
   courseId: string,
@@ -188,14 +216,20 @@ async function main() {
     });
   }
 
+  await renameLegacyOrg("edujarr", "convolution-labs");
+
   const org = await prisma.organization.upsert({
-    where: { slug: "edujarr" },
-    update: { name: "Edujarr Demo Institute", status: "ACTIVE", planId: "plan_pro" },
+    where: { slug: "convolution-labs" },
+    update: {
+      name: "Convolution LMS",
+      status: "ACTIVE",
+      planId: "plan_pro",
+    },
     create: {
-      id: "org_edujarr",
-      name: "Edujarr Demo Institute",
-      slug: "edujarr",
-      subdomain: "edujarr",
+      id: "org_convolution_labs",
+      name: "Convolution LMS",
+      slug: "convolution-labs",
+      subdomain: "convolution-labs",
       status: "ACTIVE",
       planId: "plan_pro",
     },
@@ -205,7 +239,7 @@ async function main() {
     where: { organizationId: org.id },
     update: { planId: "plan_pro", status: "ACTIVE" },
     create: {
-      id: "sub_edujarr",
+      id: "sub_convolution_labs",
       organizationId: org.id,
       planId: "plan_pro",
       status: "ACTIVE",
@@ -213,8 +247,10 @@ async function main() {
     },
   });
 
+  await renameLegacyEmail("admin@edujarr.com", "admin@convolutionlabs.com");
+
   const admin = await upsertUserWithPassword({
-    email: "admin@edujarr.com",
+    email: "admin@convolutionlabs.com",
     name: "Sam Admin",
     role: Role.ADMIN,
     image: asset("/images/about/video.jpg"),
@@ -222,7 +258,7 @@ async function main() {
     extendedProfile: {
       headline: "Head of Learning Operations",
       location: "San Francisco, CA",
-      website: "https://edujarr.com",
+      website: "https://convolutionlabs.com",
       phone: "+1 (415) 555-0100",
       linkedIn: "linkedin.com/in/sam-admin",
     },

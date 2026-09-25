@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { cleanString, jsonError, optionalString, requireSession, requireTenantApi } from "@/lib/api";
+import { cleanString, jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import { mergeExtendedProfile } from "@/lib/profile-data";
 
 export async function GET() {
@@ -46,30 +46,28 @@ export async function PATCH(request: Request) {
     select: { preferences: true },
   });
 
+  // undefined = leave as is; "" or null = clear the field.
+  const extendedField = (value: unknown, max: number) =>
+    value === undefined ? undefined : cleanString(value, max);
   const extendedFields = {
-    headline: optionalString(body.headline, 160) ?? undefined,
-    location: optionalString(body.location, 120) ?? undefined,
-    website: optionalString(body.website, 300) ?? undefined,
-    phone: optionalString(body.phone, 40) ?? undefined,
-    linkedIn: optionalString(body.linkedIn, 300) ?? undefined,
-    github: optionalString(body.github, 300) ?? undefined,
+    headline: extendedField(body.headline, 160),
+    location: extendedField(body.location, 120),
+    website: extendedField(body.website, 300),
+    phone: extendedField(body.phone, 40),
+    linkedIn: extendedField(body.linkedIn, 300),
+    github: extendedField(body.github, 300),
   };
 
   const hasExtended = Object.values(extendedFields).some((v) => v !== undefined);
   const preferences = hasExtended
-    ? mergeExtendedProfile(
-        current?.preferences,
-        Object.fromEntries(
-          Object.entries(extendedFields).filter(([, v]) => v !== undefined),
-        ),
-      )
+    ? mergeExtendedProfile(current?.preferences, extendedFields)
     : undefined;
 
   const user = await prisma.user.update({
     where: { id: session.user.id },
     data: {
       name,
-      bio: cleanString(body.bio, 2_000) || null,
+      ...(body.bio !== undefined ? { bio: cleanString(body.bio, 2_000) || null } : {}),
       ...(image !== undefined ? { image } : {}),
       ...(preferences ? { preferences: preferences as Prisma.InputJsonValue } : {}),
     },

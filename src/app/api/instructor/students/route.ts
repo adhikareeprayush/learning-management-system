@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { jsonError, requireTeacherApi } from "@/lib/api";
+import { requireTeacherApi } from "@/lib/api";
 import { isOrgAdmin } from "@/lib/tenant";
 
 export async function GET(request: Request) {
@@ -12,7 +12,9 @@ export async function GET(request: Request) {
       ...(courseId ? { courseId } : {}),
       course: {
         organizationId: auth.organizationId,
-        ...(isOrgAdmin(auth.member) ? {} : { instructorId: auth.session.user.id }),
+        ...(auth.session.user.role === "ADMIN" || isOrgAdmin(auth.member)
+          ? {}
+          : { instructorId: auth.session.user.id }),
       },
     },
     orderBy: { enrolledAt: "desc" },

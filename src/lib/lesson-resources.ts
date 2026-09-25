@@ -71,3 +71,66 @@ export function emptyQuiz(): QuizPayload {
     ],
   };
 }
+
+export type PublicQuizQuestion = Omit<QuizQuestion, "correctIndex">;
+
+export type PublicQuizPayload = {
+  questions: PublicQuizQuestion[];
+  passingScore: number;
+};
+
+/** Quiz payload with the answer key removed — safe to send to learners. */
+export function toPublicQuizPayload(payload: QuizPayload): PublicQuizPayload {
+  return {
+    questions: payload.questions.map(({ id, prompt, options }) => ({
+      id,
+      prompt,
+      options,
+    })),
+    passingScore: payload.passingScore ?? DEFAULT_PASSING_SCORE,
+  };
+}
+
+export function parsePublicQuizPayload(
+  description: string | null | undefined,
+): PublicQuizPayload | null {
+  const payload = parseQuizPayload(description);
+  return payload ? toPublicQuizPayload(payload) : null;
+}
+
+/**
+ * Quiz answer keys live in `description`; strip them for anyone who can't
+ * author the lesson. Non-quiz resources pass through unchanged.
+ */
+export function redactResourceForLearner<
+  T extends { type: string; description: string | null },
+>(resource: T): T {
+  if (resource.type !== "QUIZ") return resource;
+  const payload = parseQuizPayload(resource.description);
+  return {
+    ...resource,
+    description: payload ? JSON.stringify(toPublicQuizPayload(payload)) : null,
+  };
+}
+
+/** Keep only integer answers for questions that exist in the quiz. */
+export function sanitizeQuizAnswers(
+  payload: QuizPayload,
+  raw: unknown,
+): Record<string, number> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const input = raw as Record<string, unknown>;
+  const answers: Record<string, number> = {};
+  for (const question of payload.questions) {
+    const value = input[question.id];
+    if (
+      typeof value === "number" &&
+      Number.isInteger(value) &&
+      value >= 0 &&
+      value < question.options.length
+    ) {
+      answers[question.id] = value;
+    }
+  }
+  return answers;
+}

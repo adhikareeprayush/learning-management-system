@@ -4,19 +4,32 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FlashBanner } from "@/components/ui/flash-banner";
+import { COURSE_CATEGORIES } from "@/lib/course-categories";
+import { parseCoursePriceInput } from "@/lib/course-price-input";
+import { formatCoursePrice } from "@/lib/pricing";
+
+const inputClass =
+  "w-full rounded-[10px] border border-black/10 bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-brand-purple";
 
 export function CourseForm() {
   const router = useRouter();
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState("Web Development");
+  const [category, setCategory] = useState<string>(COURSE_CATEGORIES[0]);
   const [description, setDescription] = useState("");
-  const [price, setPrice] = useState("39.99");
+  const [priceNpr, setPriceNpr] = useState("");
+  const [priceUsd, setPriceUsd] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const prices = parseCoursePriceInput({ npr: priceNpr, usd: priceUsd });
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!prices.ok) {
+      setError(prices.error);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -27,7 +40,8 @@ export function CourseForm() {
           title,
           category,
           description,
-          price: Number(price),
+          price: prices.price,
+          priceNpr: prices.priceNpr,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -46,12 +60,9 @@ export function CourseForm() {
   }
 
   return (
-    <form
-      className="space-y-4 rounded-2xl border border-black/5 bg-white p-6"
-      onSubmit={onSubmit}
-    >
+    <form className="space-y-4" onSubmit={onSubmit}>
       <FlashBanner message={flash} onDismiss={() => setFlash(null)} />
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium">Title</span>
         <input
@@ -59,7 +70,7 @@ export function CourseForm() {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Untitled course"
-          className="w-full rounded-[10px] border border-black/10 bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-brand-purple"
+          className={inputClass}
         />
       </label>
       <label className="block">
@@ -67,12 +78,11 @@ export function CourseForm() {
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
-          className="w-full rounded-[10px] border border-black/10 bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-brand-purple"
+          className={inputClass}
         >
-          <option>Web Development</option>
-          <option>Graphic Design</option>
-          <option>Digital Marketing</option>
-          <option>Business</option>
+          {COURSE_CATEGORIES.map((option) => (
+            <option key={option}>{option}</option>
+          ))}
         </select>
       </label>
       <label className="block">
@@ -81,19 +91,51 @@ export function CourseForm() {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Short pitch for learners…"
-          className="min-h-28 w-full rounded-[10px] border border-black/10 bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-brand-purple"
+          className={`min-h-28 ${inputClass}`}
         />
       </label>
-      <label className="block">
-        <span className="mb-1.5 block text-sm font-medium">Price (USD)</span>
-        <input
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          className="w-full rounded-[10px] border border-black/10 bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-brand-purple"
-        />
-      </label>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium">Price (NPR)</span>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            inputMode="numeric"
+            value={priceNpr}
+            onChange={(e) => setPriceNpr(e.target.value)}
+            placeholder="0 = free"
+            className={inputClass}
+          />
+          <span className="mt-1 block text-xs text-muted">
+            In rupees. Leave empty or 0 for a free course; paid courses start at Rs 10.
+          </span>
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-sm font-medium">List price (USD, optional)</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            value={priceUsd}
+            onChange={(e) => setPriceUsd(e.target.value)}
+            placeholder="0.00"
+            className={inputClass}
+          />
+          <span className="mt-1 block text-xs text-muted">
+            Only charged (converted to NPR) when no NPR price is set.
+          </span>
+        </label>
+      </div>
+      <p className="text-sm text-muted">
+        Students pay:{" "}
+        <strong className="text-brand-navy">
+          {prices.ok ? formatCoursePrice(prices) : "—"}
+        </strong>
+      </p>
       <div className="flex flex-col gap-2 sm:flex-row">
-        <Button submit className="w-full sm:flex-1" disabled={saving}>
+        <Button submit className="w-full sm:flex-1" loading={saving}>
           {saving ? "Saving…" : "Save draft"}
         </Button>
         <Button

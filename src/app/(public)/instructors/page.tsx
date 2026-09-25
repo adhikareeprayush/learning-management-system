@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { GraduationCap } from "lucide-react";
 import { PageHero } from "@/components/layout/page-hero";
@@ -34,9 +35,11 @@ export default async function InstructorsPage() {
               className="rounded-2xl border border-black/5 bg-white p-5 text-center shadow-sm transition hover:border-brand-purple/20 hover:shadow-md"
             >
               {person.image ? (
-                <img
+                <Image
                   src={person.image}
                   alt=""
+                  width={96}
+                  height={96}
                   className="mx-auto size-24 rounded-full object-cover"
                 />
               ) : (

@@ -10,6 +10,8 @@ type ButtonProps = {
   type?: "button" | "submit";
   submit?: boolean;
   disabled?: boolean;
+  /** Shows a spinner and disables the button. `disabled` alone never spins. */
+  loading?: boolean;
   onClick?: React.MouseEventHandler<HTMLButtonElement>;
 };
 
@@ -39,14 +41,16 @@ export function Button({
   variant = "primary",
   className = "",
   disabled = false,
+  loading = false,
   type = "button",
   submit = false,
   onClick,
 }: ButtonProps) {
+  const inactive = disabled || loading;
   const classes = `inline-flex items-center justify-center gap-2 rounded-[10px] px-6 py-3 text-[15px] font-semibold tracking-wide transition ${variants[variant]} ${className}`;
-  const buttonClasses = `${classes} ${disabled ? "opacity-50 cursor-not-allowed" : ""}`;
+  const buttonClasses = `${classes} ${inactive ? "opacity-50 cursor-not-allowed" : ""}`;
 
-  if (href && !disabled) {
+  if (href && !inactive) {
     return (
       <Link href={href} className={classes}>
         {children}
@@ -58,11 +62,12 @@ export function Button({
     <button
       type={submit ? "submit" : type}
       className={buttonClasses}
-      disabled={disabled}
+      disabled={inactive}
+      aria-busy={loading || undefined}
       onClick={onClick}
     >
       {children}
-      {disabled ? <Loader2 className="size-4 animate-spin" /> : null}
+      {loading ? <Loader2 className="size-4 animate-spin" /> : null}
     </button>
   );
 }

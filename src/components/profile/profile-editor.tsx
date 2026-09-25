@@ -132,6 +132,7 @@ export function ProfileEditor({
       const form = new FormData();
       form.set("file", file);
       form.set("provider", "imagekit");
+      form.set("purpose", "avatar");
       const uploadResponse = await fetch("/api/upload", {
         method: "POST",
         body: form,
@@ -433,7 +434,7 @@ export function ProfileEditor({
                 </div>
                 <button
                   disabled={busy}
-                  className="h-10 rounded-xl bg-[#083f9b] px-4 text-sm font-semibold text-white disabled:opacity-50"
+                  className="h-10 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white disabled:opacity-50"
                 >
                   {busy ? "Saving…" : "Save changes"}
                 </button>

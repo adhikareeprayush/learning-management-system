@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
+  Award,
   CheckCircle2,
   Circle,
   Clock3,
@@ -12,10 +13,7 @@ import {
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { VideoPlayer } from "@/components/course/video-player";
 import { LessonCompleteToggle } from "@/components/course/lesson-complete-toggle";
-import {
-  LessonResourcesPanel,
-  type StudentLessonResource,
-} from "@/components/course/lesson-resources-panel";
+import { LessonResourcesPanel } from "@/components/course/lesson-resources-panel";
 import { getServerSession } from "@/lib/auth";
 import {
   flatLessonsFromCourse,
@@ -32,16 +30,16 @@ export default async function LessonPage({ params }: Props) {
 
   const { courseId, lessonId } = await params;
   const course = await getEnrolledStudentCourse(session.user.id, courseId);
-  if (!course) notFound();
+  if (!course) redirect(`/courses/${encodeURIComponent(courseId)}`);
 
   const lessons = flatLessonsFromCourse(course);
   const lessonIndex = lessons.findIndex((l) => l.id === lessonId);
   if (lessonIndex < 0) notFound();
 
   const lesson = lessons[lessonIndex]!;
-  const module =
-    course.modules.find((m) => m.lessons.some((l) => l.id === lesson.id)) ??
-    course.modules[0]!;
+  const lessonModule = course.modules.find((m) =>
+    m.lessons.some((l) => l.id === lesson.id),
+  );
   const prev = lessons[lessonIndex - 1] ?? null;
   const next = lessons[lessonIndex + 1] ?? null;
 
@@ -51,7 +49,11 @@ export default async function LessonPage({ params }: Props) {
         backHref={`/student/courses/${course.slug}`}
         backLabel={course.title}
         title={lesson.title}
-        subtitle={`${module.title} · ${lesson.duration}`}
+        subtitle={
+          lessonModule
+            ? `${lessonModule.title} · ${lesson.duration}`
+            : lesson.duration
+        }
       />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(280px,0.85fr)]">
@@ -90,8 +92,9 @@ export default async function LessonPage({ params }: Props) {
             </h2>
             <div className="mt-4 space-y-3 text-sm leading-relaxed text-[#324361] sm:text-[15px]">
               {lesson.content.length > 0 ? (
-                lesson.content.map((paragraph) => (
-                  <p key={paragraph}>{paragraph}</p>
+                lesson.content.map((paragraph, index) => (
+                  // Paragraphs are static split text; order is the identity.
+                  <p key={index}>{paragraph}</p>
                 ))
               ) : (
                 <p className="text-muted">No written content for this lesson.</p>
@@ -99,10 +102,8 @@ export default async function LessonPage({ params }: Props) {
             </div>
           </article>
 
-          {"resources" in lesson && (lesson as { resources: StudentLessonResource[] }).resources.length > 0 ? (
-            <LessonResourcesPanel
-              resources={(lesson as { resources: StudentLessonResource[] }).resources}
-            />
+          {lesson.resources.length > 0 ? (
+            <LessonResourcesPanel resources={lesson.resources} />
           ) : null}
 
           {course.progress >= 100 ? (
@@ -114,16 +115,26 @@ export default async function LessonPage({ params }: Props) {
                     Course complete!
                   </p>
                   <p className="mt-0.5 text-sm text-muted">
-                    Tell others what you thought of {course.title}.
+                    Your certificate is ready. Tell others what you thought of{" "}
+                    {course.title}.
                   </p>
                 </div>
               </div>
-              <Link
-                href={`/student/courses/${course.slug}#course-reviews`}
-                className="mt-3 inline-flex h-10 items-center justify-center rounded-xl bg-brand-teal px-4 text-sm font-semibold text-white transition hover:brightness-110 sm:mt-0"
-              >
-                Write a review
-              </Link>
+              <div className="mt-3 flex flex-wrap gap-2 sm:mt-0 sm:shrink-0">
+                <Link
+                  href="/student/certificates"
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-brand-teal px-4 text-sm font-semibold text-white transition hover:brightness-110"
+                >
+                  <Award className="size-4" />
+                  View certificate
+                </Link>
+                <Link
+                  href={`/student/courses/${course.slug}#course-reviews`}
+                  className="inline-flex h-10 items-center justify-center rounded-xl border border-brand-teal/30 bg-white px-4 text-sm font-semibold text-brand-navy transition hover:bg-surface"
+                >
+                  Write a review
+                </Link>
+              </div>
             </div>
           ) : null}
 
@@ -142,7 +153,7 @@ export default async function LessonPage({ params }: Props) {
             {next ? (
               <Link
                 href={`/student/courses/${course.slug}/lessons/${next.id}`}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#083f9b] px-4 text-sm font-semibold text-white transition hover:bg-brand-purple"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white transition hover:bg-brand-purple"
               >
                 Next lesson
                 <ArrowRight className="size-4" />
@@ -183,7 +194,7 @@ export default async function LessonPage({ params }: Props) {
                           href={`/student/courses/${course.slug}/lessons/${item.id}`}
                           className={`flex items-start gap-2.5 rounded-xl px-3 py-2.5 text-sm transition ${
                             active
-                              ? "bg-[#083f9b] text-white"
+                              ? "bg-brand-blue text-white"
                               : "text-[#324361] hover:bg-surface"
                           }`}
                         >

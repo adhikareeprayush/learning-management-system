@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { cleanString, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import { findManagedCourse, syncCourseDuration } from "@/lib/course-access";
@@ -27,19 +28,32 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   const body = await request.json();
-  const courseModule = await prisma.module.update({
-    where: { id: moduleId },
-    data: {
-      ...(body.title !== undefined ? { title: cleanString(body.title, 160) } : {}),
-      ...(body.description !== undefined
-        ? { description: cleanString(body.description) || null }
-        : {}),
-      ...(Number.isInteger(body.order) && body.order >= 0
-        ? { order: body.order }
-        : {}),
-    },
-  });
-  return Response.json({ module: courseModule });
+  if (body.title !== undefined && !cleanString(body.title, 160)) {
+    return jsonError("title is required", 400);
+  }
+  try {
+    const courseModule = await prisma.module.update({
+      where: { id: moduleId },
+      data: {
+        ...(body.title !== undefined ? { title: cleanString(body.title, 160) } : {}),
+        ...(body.description !== undefined
+          ? { description: cleanString(body.description) || null }
+          : {}),
+        ...(Number.isInteger(body.order) && body.order >= 0
+          ? { order: body.order }
+          : {}),
+      },
+    });
+    return Response.json({ module: courseModule });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return jsonError(
+        "Another module already has that position. Reorder modules with PATCH /api/courses/[courseId]/modules.",
+        409,
+      );
+    }
+    throw error;
+  }
 }
 
 export async function DELETE(_request: Request, { params }: Params) {

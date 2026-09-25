@@ -1,7 +1,12 @@
 import { prisma } from "@/lib/db";
 import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import { canAccessLesson } from "@/lib/course-access";
-import { parseQuizPayload, scoreQuiz } from "@/lib/lesson-resources";
+import {
+  parseQuizPayload,
+  sanitizeQuizAnswers,
+  scoreQuiz,
+} from "@/lib/lesson-resources";
+import { resolveLearnerMember } from "@/lib/membership";
 
 type Params = { params: Promise<{ resourceId: string }> };
 
@@ -11,7 +16,12 @@ export async function POST(request: Request, { params }: Params) {
 
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (tenant.member?.role !== "STUDENT") return jsonError("Forbidden", 403);
+  const learner = await resolveLearnerMember(
+    tenant.organizationId,
+    session.user,
+    tenant.member,
+  );
+  if (learner?.role !== "STUDENT") return jsonError("Forbidden", 403);
 
   const { resourceId } = await params;
   const resource = await prisma.lessonResource.findUnique({
@@ -31,7 +41,7 @@ export async function POST(request: Request, { params }: Params) {
       resource.lessonId,
       tenant.organizationId,
       session,
-      tenant.member,
+      learner,
     ))
   ) {
     return jsonError("Forbidden", 403);
@@ -40,12 +50,10 @@ export async function POST(request: Request, { params }: Params) {
   const payload = parseQuizPayload(resource.description);
   if (!payload) return jsonError("Quiz is not configured", 400);
 
-  const body = await request.json();
-  const answers =
-    body.answers && typeof body.answers === "object"
-      ? (body.answers as Record<string, number>)
-      : {};
+  const body = await request.json().catch(() => ({}));
+  const answers = sanitizeQuizAnswers(payload, body.answers);
 
+  // Scored server-side: learners never receive the answer key.
   const result = scoreQuiz(payload, answers);
 
   const attempt = await prisma.resourceAttempt.create({

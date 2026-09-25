@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, CheckCircle2, Users } from "lucide-react";
 import {
@@ -13,6 +14,7 @@ import { StatsCard } from "@/components/dashboard/stats-card";
 import { Button } from "@/components/ui/button";
 import { useLiveData } from "@/hooks/use-live-data";
 import type { getInstructorDashboardData } from "@/lib/dashboard-data";
+import { formatNprFromPaisa } from "@/lib/pricing";
 
 type DashboardData = Awaited<ReturnType<typeof getInstructorDashboardData>>;
 
@@ -42,8 +44,6 @@ export function InstructorDashboardView({
     revenueMix,
     instructorActivity,
   } = data;
-
-  const totalRevenue = revenueMix.series.reduce((a, b) => a + b, 0);
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -109,27 +109,39 @@ export function InstructorDashboardView({
             <h2 className="text-base font-semibold text-brand-navy sm:text-lg">
               Revenue mix
             </h2>
-            <p className="text-sm text-muted">Enrollment value by course</p>
+            <p className="text-sm text-muted">Approved payments by course (NPR)</p>
           </div>
-          {revenueMix.labels.length > 0 ? (
+          {revenueMix.series.length > 0 ? (
             <ApexChart
               type="donut"
               height={280}
               series={revenueMix.series}
               options={{
                 labels: revenueMix.labels,
-                colors: [chartColors.purple, chartColors.blue, chartColors.mint],
+                colors: [
+                  chartColors.purple,
+                  chartColors.blue,
+                  chartColors.teal,
+                  chartColors.mint,
+                  chartColors.navy,
+                ],
                 legend: { position: "bottom", fontSize: "12px" },
+                tooltip: {
+                  y: { formatter: (value: number) => formatNprFromPaisa(value) },
+                },
                 plotOptions: {
                   pie: {
                     donut: {
                       size: "68%",
                       labels: {
                         show: true,
+                        value: {
+                          formatter: (value: string) => formatNprFromPaisa(Number(value)),
+                        },
                         total: {
                           show: true,
                           label: "Total",
-                          formatter: () => `$${totalRevenue.toFixed(0)}`,
+                          formatter: () => formatNprFromPaisa(revenueMix.totalPaisa),
                         },
                       },
                     },
@@ -139,7 +151,7 @@ export function InstructorDashboardView({
             />
           ) : (
             <p className="py-12 text-center text-sm text-muted">
-              Create courses to see revenue breakdown.
+              No approved payments yet.
             </p>
           )}
         </section>
@@ -174,9 +186,11 @@ export function InstructorDashboardView({
                     href={`/instructor/courses/${course.id}`}
                     className="flex gap-3 rounded-xl border border-black/5 p-3 transition hover:bg-surface/70"
                   >
-                    <img
+                    <Image
                       src={course.image}
                       alt=""
+                      width={56}
+                      height={56}
                       className="size-14 shrink-0 rounded-lg object-cover"
                     />
                     <div className="min-w-0 flex-1">

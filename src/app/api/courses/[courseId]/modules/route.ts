@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { cleanString, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import { findManagedCourse } from "@/lib/course-access";
+import { planReorder, reorderSteps } from "@/lib/reorder";
 
 type Params = { params: Promise<{ courseId: string }> };
 
@@ -59,4 +60,46 @@ export async function POST(request: Request, { params }: Params) {
     },
   });
   return Response.json({ module: courseModule }, { status: 201 });
+}
+
+/** Reorder modules: body `{ moduleIds: string[] }` listing every module in the new order. */
+export async function PATCH(request: Request, { params }: Params) {
+  const tenant = await requireTenantApi();
+  if (tenant instanceof Response) return tenant;
+
+  const session = await requireSession();
+  if (!session) return jsonError("Unauthorized", 401);
+  if (!isTeacher(session, tenant.member)) return jsonError("Forbidden", 403);
+
+  const { courseId } = await params;
+  const course = await findManagedCourse(
+    courseId,
+    tenant.organizationId,
+    session,
+    tenant.member,
+  );
+  if (!course) return jsonError("Course not found", 404);
+
+  const body = await request.json().catch(() => null);
+  const current = await prisma.module.findMany({
+    where: { courseId: course.id },
+    select: { id: true, order: true },
+  });
+  const changes = planReorder(current, body?.moduleIds);
+  if (!changes) {
+    return jsonError("moduleIds must list every module in this course exactly once", 400);
+  }
+  if (changes.length > 0) {
+    await prisma.$transaction(
+      reorderSteps(changes).map(({ id, order }) =>
+        prisma.module.update({ where: { id }, data: { order } }),
+      ),
+    );
+  }
+  const modules = await prisma.module.findMany({
+    where: { courseId: course.id },
+    orderBy: { order: "asc" },
+    select: { id: true, order: true },
+  });
+  return Response.json({ modules });
 }

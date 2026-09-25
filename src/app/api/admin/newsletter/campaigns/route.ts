@@ -2,7 +2,7 @@ import { jsonError, requireOrgAdminApi } from "@/lib/api";
 import {
   createNewsletterCampaign,
   listNewsletterCampaigns,
-  sendNewsletterCampaign,
+  markNewsletterCampaignSent,
 } from "@/lib/newsletter";
 
 export async function GET() {
@@ -20,18 +20,23 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const action = typeof body.action === "string" ? body.action : "create";
 
-  if (action === "send") {
+  // "send" is kept as an alias for older clients. No email provider is wired
+  // up, so this only records the campaign as sent.
+  if (action === "mark_sent" || action === "send") {
     const campaignId = typeof body.campaignId === "string" ? body.campaignId : "";
     if (!campaignId) return jsonError("campaignId is required", 400);
 
-    const result = await sendNewsletterCampaign(auth.organizationId, campaignId);
+    const result = await markNewsletterCampaignSent(auth.organizationId, campaignId);
     if (!result.ok) return jsonError(result.error, result.status);
 
     return Response.json({
       campaign: result.campaign,
       recipientCount: result.recipientCount,
+      delivered: false,
     });
   }
+
+  if (action !== "create") return jsonError("Unknown action", 400);
 
   const subject = typeof body.subject === "string" ? body.subject : "";
   const messageBody = typeof body.body === "string" ? body.body : "";

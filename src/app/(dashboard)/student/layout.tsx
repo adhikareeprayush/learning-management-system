@@ -1,11 +1,6 @@
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/auth";
-
-function homeForRole(role: string | null | undefined) {
-  if (role === "ADMIN") return "/admin";
-  if (role === "INSTRUCTOR") return "/instructor";
-  return "/student";
-}
+import { homeForRole } from "@/lib/page-guards";
 
 export default async function StudentLayout({
   children,

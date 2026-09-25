@@ -1,14 +1,13 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { AssignmentManager } from "@/components/course/assignment-manager";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
-import { getServerSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { requireInstructorPage } from "@/lib/page-guards";
 
 type Props = { params: Promise<{ courseId: string }> };
 
 export default async function InstructorAssignmentsPage({ params }: Props) {
-  const session = await getServerSession();
-  if (!session) redirect("/login");
+  const session = await requireInstructorPage();
   const { courseId } = await params;
   const course = await prisma.course.findFirst({
     where: { instructorId: session.user.id, OR: [{ id: courseId }, { slug: courseId }] },

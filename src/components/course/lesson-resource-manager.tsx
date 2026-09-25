@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ClipboardList,
   Download,
@@ -166,38 +166,40 @@ function QuizEditor({
 
 export function LessonResourceManager({ lessonId }: { lessonId: string }) {
   const [resources, setResources] = useState<ResourceRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loadedLessonId, setLoadedLessonId] = useState<string | null>(null);
+  const loading = loadedLessonId !== lessonId;
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newType, setNewType] = useState<LessonResourceType>("TEXT");
   const [newTitle, setNewTitle] = useState("");
   const [quizDrafts, setQuizDrafts] = useState<Record<string, QuizPayload>>({});
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api<{ resources: ResourceRow[] }>(
-        `/api/lessons/${lessonId}/resources`,
-      );
-      setResources(data.resources);
-      const drafts: Record<string, QuizPayload> = {};
-      for (const resource of data.resources) {
-        if (resource.type === "QUIZ") {
-          drafts[resource.id] =
-            parseQuizPayload(resource.description) ?? emptyQuiz();
-        }
-      }
-      setQuizDrafts(drafts);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load resources");
-    } finally {
-      setLoading(false);
-    }
-  }, [lessonId]);
-
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    api<{ resources: ResourceRow[] }>(`/api/lessons/${lessonId}/resources`)
+      .then((data) => {
+        if (cancelled) return;
+        setResources(data.resources);
+        const drafts: Record<string, QuizPayload> = {};
+        for (const resource of data.resources) {
+          if (resource.type === "QUIZ") {
+            drafts[resource.id] =
+              parseQuizPayload(resource.description) ?? emptyQuiz();
+          }
+        }
+        setQuizDrafts(drafts);
+      })
+      .catch((caught: unknown) => {
+        if (cancelled) return;
+        setError(caught instanceof Error ? caught.message : "Could not load resources");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadedLessonId(lessonId);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [lessonId]);
 
   async function addResource(e: React.FormEvent) {
     e.preventDefault();
@@ -285,6 +287,8 @@ export function LessonResourceManager({ lessonId }: { lessonId: string }) {
     try {
       const form = new FormData();
       form.set("file", file);
+      form.set("provider", "imagekit");
+      form.set("purpose", "lesson-resource");
       const uploaded = await api<{ upload: { url: string } }>("/api/upload", {
         method: "POST",
         body: form,
@@ -428,7 +432,7 @@ export function LessonResourceManager({ lessonId }: { lessonId: string }) {
                       type="button"
                       onClick={() => saveResource(resource)}
                       disabled={busy !== null || !resource.title.trim()}
-                      className="inline-flex items-center gap-1 rounded-lg bg-[#083f9b] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                      className="inline-flex items-center gap-1 rounded-lg bg-brand-blue px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
                     >
                       <Save className="size-3.5" />
                       {busy === resource.id ? "Saving…" : "Save"}

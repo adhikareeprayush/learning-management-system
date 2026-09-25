@@ -27,8 +27,11 @@
     "seed": "tsx seed.ts"
   },
   "dependencies": {
+    "@fontsource/cormorant-garamond": "^5.3.0",
     "@fontsource/rowdies": "^5.2.5",
     "@fontsource/saira": "^5.2.5",
+    "@fontsource/sora": "^5.3.0",
+    "@pdf-lib/fontkit": "^1.1.1",
     "@prisma/adapter-pg": "^7.9.0",
     "@prisma/client": "^7.9.0",
     "apexcharts": "^6.5.0",

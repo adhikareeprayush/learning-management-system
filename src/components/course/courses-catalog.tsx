@@ -1,8 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   LayoutGrid,
   List,
@@ -13,80 +14,27 @@ import {
 } from "lucide-react";
 import { CourseCard } from "@/components/course/course-card";
 import {
+  ALL_FILTER,
+  PRICE_STEP_RUPEES,
   categoryFromSlug,
-  filterCategories,
   filterLevels,
+  levelLabel,
   slugFromCategory,
+  sortCatalogCourses,
   sortOptions,
-  type CatalogCourse,
-} from "@/lib/mock-courses";
+  type CatalogApiCourse,
+  type CatalogSortId,
+} from "@/lib/catalog-filters";
+import { formatNprFromPaisa } from "@/lib/pricing";
 
-type SortId = (typeof sortOptions)[number]["id"];
+type CatalogCourse = CatalogApiCourse & { levelLabel: string };
 
-type ApiCourse = {
-  id: string;
-  slug: string;
-  title: string;
-  category: string | null;
-  image: string;
-  instructor: string;
-  level: string;
-  price: string;
-  priceValue: number;
-  duration: string;
-  students: string;
-  studentCount: number;
-  featured?: boolean;
-};
-
-function toCatalogCourse(course: ApiCourse): CatalogCourse {
-  const level =
-    course.level === "BEGINNER"
-      ? "Beginner"
-      : course.level === "INTERMEDIATE"
-        ? "Intermediate"
-        : course.level === "ADVANCED"
-          ? "Advanced"
-          : ((["Beginner", "Intermediate", "Advanced"].includes(course.level)
-              ? course.level
-              : "Beginner") as CatalogCourse["level"]);
-
-  return {
-    id: course.slug || course.id,
-    title: course.title,
-    image: course.image,
-    students: course.students,
-    studentCount: course.studentCount,
-    duration: course.duration,
-    price: course.price,
-    priceValue: course.priceValue,
-    category: course.category ?? "Course",
-    level,
-    rating: 5,
-    instructor: course.instructor,
-    date: "01/01/2026",
-    featured: course.featured,
-  };
-}
-
-function sortCourses(list: CatalogCourse[], sort: SortId) {
-  const next = [...list];
-  switch (sort) {
-    case "rating":
-      return next.sort((a, b) => b.rating - a.rating);
-    case "price-asc":
-      return next.sort((a, b) => a.priceValue - b.priceValue);
-    case "price-desc":
-      return next.sort((a, b) => b.priceValue - a.priceValue);
-    case "newest":
-      return next;
-    default:
-      return next.sort((a, b) => b.studentCount - a.studentCount);
-  }
+function formatRating(course: CatalogCourse) {
+  if (course.averageRating == null) return null;
+  return `${course.averageRating.toFixed(1)} (${course.reviewCount})`;
 }
 
 export function CoursesCatalog() {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const categoryParam = searchParams.get("category");
@@ -96,27 +44,33 @@ export function CoursesCatalog() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState(() => queryParam ?? "");
-  const [category, setCategory] = useState<string>(() =>
-    categoryFromSlug(categoryParam),
-  );
-  const [level, setLevel] = useState<string>("All");
-  const [maxPrice, setMaxPrice] = useState(100);
-  const [minRating, setMinRating] = useState(0);
-  const [sort, setSort] = useState<SortId>("popular");
+  const [syncedQueryParam, setSyncedQueryParam] = useState(queryParam);
+  const [level, setLevel] = useState<string>(ALL_FILTER);
+  const [maxPriceRupees, setMaxPriceRupees] = useState<number | null>(null);
+  const [sort, setSort] = useState<CatalogSortId>("popular");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  // A new ?q= (e.g. a search submitted while already on /courses) replaces the typed query.
+  if (queryParam !== syncedQueryParam) {
+    setSyncedQueryParam(queryParam);
+    if (queryParam != null) setQuery(queryParam);
+  }
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setLoading(true);
-      setLoadError(null);
       try {
         const res = await fetch("/api/courses");
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Failed to load courses");
         if (!cancelled) {
-          setCourses((data.courses as ApiCourse[]).map(toCatalogCourse));
+          setCourses(
+            (data.courses as CatalogApiCourse[]).map((course) => ({
+              ...course,
+              levelLabel: levelLabel(course.level),
+            })),
+          );
         }
       } catch (err) {
         if (!cancelled) {
@@ -132,63 +86,78 @@ export function CoursesCatalog() {
     };
   }, []);
 
-  useEffect(() => {
-    setCategory(categoryFromSlug(categoryParam));
-  }, [categoryParam]);
+  const categoryCounts = new Map<string, number>();
+  for (const course of courses) {
+    if (!course.category) continue;
+    categoryCounts.set(
+      course.category,
+      (categoryCounts.get(course.category) ?? 0) + 1,
+    );
+  }
+  const categories = [...categoryCounts.keys()].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  // The URL is the source of truth for the category so links stay shareable.
+  const category = categoryFromSlug(categoryParam, categories);
 
-  useEffect(() => {
-    if (queryParam != null) setQuery(queryParam);
-  }, [queryParam]);
+  const maxPaisa = courses.reduce(
+    (max, course) => Math.max(max, course.pricePaisa),
+    0,
+  );
+  const sliderMax = Math.max(
+    PRICE_STEP_RUPEES,
+    Math.ceil(maxPaisa / 100 / PRICE_STEP_RUPEES) * PRICE_STEP_RUPEES,
+  );
+  const priceCap =
+    maxPriceRupees == null ? sliderMax : Math.min(maxPriceRupees, sliderMax);
+  const priceLimited = priceCap < sliderMax;
 
   function selectCategory(next: string) {
-    setCategory(next);
     const params = new URLSearchParams(searchParams.toString());
     const slug = slugFromCategory(next);
     if (slug) params.set("category", slug);
     else params.delete("category");
     const qs = params.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
   }
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const list = courses.filter((course) => {
-      if (category !== "All" && course.category !== category) return false;
-      if (level !== "All" && course.level !== level) return false;
-      if (course.priceValue > maxPrice) return false;
-      if (course.rating < minRating) return false;
+  const q = query.trim().toLowerCase();
+  const filtered = sortCatalogCourses(
+    courses.filter((course) => {
+      if (category !== ALL_FILTER && course.category !== category) return false;
+      if (level !== ALL_FILTER && course.levelLabel !== level) return false;
+      if (priceLimited && course.pricePaisa > priceCap * 100) return false;
       if (!q) return true;
       return (
         course.title.toLowerCase().includes(q) ||
         course.instructor.toLowerCase().includes(q) ||
-        course.category.toLowerCase().includes(q)
+        (course.category ?? "").toLowerCase().includes(q)
       );
-    });
-    return sortCourses(list, sort);
-  }, [courses, query, category, level, maxPrice, minRating, sort]);
+    }),
+    sort,
+  );
 
   const activeChips = [
-    category !== "All" ? { key: "category", label: category } : null,
-    level !== "All" ? { key: "level", label: level } : null,
-    maxPrice < 100 ? { key: "price", label: `Under $${maxPrice}` } : null,
-    minRating > 0 ? { key: "rating", label: `${minRating}+ stars` } : null,
+    category !== ALL_FILTER ? { key: "category", label: category } : null,
+    level !== ALL_FILTER ? { key: "level", label: level } : null,
+    priceLimited
+      ? { key: "price", label: `Up to ${formatNprFromPaisa(priceCap * 100)}` }
+      : null,
     query ? { key: "query", label: `"${query}"` } : null,
   ].filter(Boolean) as { key: string; label: string }[];
 
   function clearFilters() {
     setQuery("");
-    selectCategory("All");
-    setLevel("All");
-    setMaxPrice(100);
-    setMinRating(0);
+    selectCategory(ALL_FILTER);
+    setLevel(ALL_FILTER);
+    setMaxPriceRupees(null);
     setSort("popular");
   }
 
   function removeChip(key: string) {
-    if (key === "category") selectCategory("All");
-    if (key === "level") setLevel("All");
-    if (key === "price") setMaxPrice(100);
-    if (key === "rating") setMinRating(0);
+    if (key === "category") selectCategory(ALL_FILTER);
+    if (key === "level") setLevel(ALL_FILTER);
+    if (key === "price") setMaxPriceRupees(null);
     if (key === "query") setQuery("");
   }
 
@@ -199,18 +168,28 @@ export function CoursesCatalog() {
           Category
         </p>
         <ul className="space-y-0.5">
-          {filterCategories.map((item) => (
+          {[ALL_FILTER, ...categories].map((item) => (
             <li key={item}>
               <button
                 type="button"
                 onClick={() => selectCategory(item)}
-                className={`w-full rounded-xl px-3 py-2 text-left text-sm font-medium transition ${
+                aria-pressed={category === item}
+                className={`flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium transition ${
                   category === item
                     ? "bg-brand-gradient text-white"
                     : "text-[#324361] hover:bg-surface"
                 }`}
               >
-                {item}
+                <span className="min-w-0 truncate">{item}</span>
+                <span
+                  className={`shrink-0 text-xs ${
+                    category === item ? "text-white/80" : "text-muted"
+                  }`}
+                >
+                  {item === ALL_FILTER
+                    ? courses.length
+                    : categoryCounts.get(item)}
+                </span>
               </button>
             </li>
           ))}
@@ -227,6 +206,7 @@ export function CoursesCatalog() {
               type="button"
               key={item}
               onClick={() => setLevel(item)}
+              aria-pressed={level === item}
               className={`rounded-full px-3 py-1.5 text-sm font-medium transition ${
                 level === item
                   ? "bg-brand-navy text-white"
@@ -239,23 +219,41 @@ export function CoursesCatalog() {
         </div>
       </div>
 
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-teal">
-            Max price
-          </p>
-          <span className="text-sm font-semibold text-brand-navy">${maxPrice}</span>
+      {maxPaisa > 0 ? (
+        <div>
+          <div className="mb-2 flex items-center justify-between">
+            <label
+              htmlFor="catalog-max-price"
+              className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-teal"
+            >
+              Max price
+            </label>
+            <span className="text-sm font-semibold text-brand-navy">
+              {priceLimited ? formatNprFromPaisa(priceCap * 100) : "Any"}
+            </span>
+          </div>
+          <input
+            id="catalog-max-price"
+            type="range"
+            min={0}
+            max={sliderMax}
+            step={PRICE_STEP_RUPEES}
+            value={priceCap}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setMaxPriceRupees(next >= sliderMax ? null : next);
+            }}
+            aria-valuetext={
+              priceLimited ? formatNprFromPaisa(priceCap * 100) : "Any price"
+            }
+            className="w-full accent-brand-purple"
+          />
+          <div className="mt-1 flex justify-between text-[11px] text-muted">
+            <span>Free</span>
+            <span>{formatNprFromPaisa(sliderMax * 100)}</span>
+          </div>
         </div>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          step={1}
-          value={maxPrice}
-          onChange={(e) => setMaxPrice(Number(e.target.value))}
-          className="w-full accent-brand-purple"
-        />
-      </div>
+      ) : null}
 
       <button
         type="button"
@@ -273,9 +271,11 @@ export function CoursesCatalog() {
         <div className="relative w-full">
           <Search className="pointer-events-none absolute left-3.5 top-1/2 size-5 -translate-y-1/2 text-muted sm:left-4" />
           <input
+            type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search courses, instructors, topics…"
+            aria-label="Search courses"
             className="w-full rounded-2xl border border-black/10 bg-white py-3 pl-11 pr-4 text-[15px] outline-none ring-brand-purple focus:ring-2 sm:py-3.5 sm:pl-12"
           />
         </div>
@@ -292,7 +292,7 @@ export function CoursesCatalog() {
             <span className="shrink-0 text-muted">Sort</span>
             <select
               value={sort}
-              onChange={(e) => setSort(e.target.value as SortId)}
+              onChange={(e) => setSort(e.target.value as CatalogSortId)}
               className="min-w-0 flex-1 bg-transparent font-semibold text-[#324361] outline-none"
             >
               {sortOptions.map((option) => (
@@ -357,7 +357,7 @@ export function CoursesCatalog() {
                 : `${filtered.length} course${filtered.length === 1 ? "" : "s"}`}
             </h2>
             <p className="text-sm text-muted">
-              Live catalog from the database.
+              Prices in Nepalese rupees (NPR).
             </p>
             {loadError ? (
               <p className="mt-2 text-sm text-red-600">{loadError}</p>
@@ -387,7 +387,18 @@ export function CoursesCatalog() {
           ) : view === "grid" ? (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 xl:grid-cols-3">
               {filtered.map((course) => (
-                <CourseCard key={course.id} {...course} />
+                <CourseCard
+                  key={course.id}
+                  id={course.slug}
+                  title={course.title}
+                  image={course.image}
+                  students={course.students}
+                  duration={course.duration}
+                  price={course.price}
+                  category={course.category ?? undefined}
+                  rating={course.averageRating}
+                  reviewCount={course.reviewCount}
+                />
               ))}
             </div>
           ) : (
@@ -395,19 +406,27 @@ export function CoursesCatalog() {
               {filtered.map((course) => (
                 <li key={course.id}>
                   <Link
-                    href={`/courses/${course.id}`}
+                    href={`/courses/${course.slug}`}
                     className="group flex flex-col gap-3 overflow-hidden rounded-2xl border border-black/5 bg-white p-3 shadow-sm transition hover:shadow-md sm:flex-row sm:items-center sm:gap-4 sm:p-4"
                   >
-                    <img
-                      src={course.image}
-                      alt=""
-                      className="aspect-[16/10] w-full rounded-xl object-cover sm:h-28 sm:w-40 sm:shrink-0 sm:aspect-auto md:w-44"
-                    />
+                    <div className="relative aspect-[16/10] w-full overflow-hidden rounded-xl sm:h-28 sm:w-40 sm:shrink-0 sm:aspect-auto md:w-44">
+                      <Image
+                        src={course.image}
+                        alt=""
+                        fill
+                        sizes="(max-width: 640px) 100vw, 176px"
+                        className="object-cover"
+                      />
+                    </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-brand-teal sm:text-xs">
-                        <span>{course.category}</span>
-                        <span className="text-black/20">·</span>
-                        <span>{course.level}</span>
+                        {course.category ? (
+                          <>
+                            <span>{course.category}</span>
+                            <span className="text-black/20">·</span>
+                          </>
+                        ) : null}
+                        <span>{course.levelLabel}</span>
                       </div>
                       <h3 className="mt-1 text-sm font-semibold text-[#324361] group-hover:text-brand-purple sm:text-base">
                         {course.title}
@@ -415,6 +434,16 @@ export function CoursesCatalog() {
                       <p className="mt-1 text-xs text-muted sm:text-sm">
                         {course.instructor} · {course.students} ·{" "}
                         {course.duration}
+                      </p>
+                      <p className="mt-1 inline-flex items-center gap-1 text-xs text-muted">
+                        {formatRating(course) ? (
+                          <>
+                            <Star className="size-3.5 fill-[#f5b942] text-[#f5b942]" />
+                            {formatRating(course)}
+                          </>
+                        ) : (
+                          "No ratings yet"
+                        )}
                       </p>
                     </div>
                     <div className="flex items-center justify-between border-t border-black/5 pt-3 sm:block sm:shrink-0 sm:border-0 sm:pt-0 sm:text-right">

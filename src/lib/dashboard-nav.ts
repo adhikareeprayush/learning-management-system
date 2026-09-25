@@ -103,6 +103,7 @@ export const adminNav: DashboardNavGroup[] = [
       { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
       { href: "/admin/users", label: "Users", icon: Users },
       { href: "/admin/courses", label: "Courses", icon: BookOpen },
+      { href: "/admin/roadmaps", label: "Roadmaps", icon: Compass },
       { href: "/admin/newsletter", label: "Newsletter", icon: Mail },
       { href: "/admin/payments", label: "Payments", icon: CreditCard },
       { href: "/admin/reports", label: "Reports", icon: LineChart },

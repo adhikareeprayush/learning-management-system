@@ -1,16 +1,13 @@
+import Image from "next/image";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { ArrowRight, BookOpen } from "lucide-react";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { ProgressBar } from "@/components/dashboard/progress-bar";
 import { Button } from "@/components/ui/button";
-import { getServerSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
-
-function formatPrice(cents: number) {
-  return `$${(cents / 100).toFixed(2)}`;
-}
+import { requireInstructorPage } from "@/lib/page-guards";
+import { formatCoursePrice } from "@/lib/pricing";
 
 function statusLabel(status: string) {
   if (status === "PUBLISHED") return "Published";
@@ -20,8 +17,7 @@ function statusLabel(status: string) {
 }
 
 export default async function InstructorCoursesPage() {
-  const session = await getServerSession();
-  if (!session) redirect("/login");
+  const session = await requireInstructorPage();
 
   const courses = await prisma.course.findMany({
     where: { instructorId: session.user.id },
@@ -77,11 +73,15 @@ export default async function InstructorCoursesPage() {
                 href={`/instructor/courses/${course.slug}`}
                 className="overflow-hidden rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition hover:border-brand-purple/25"
               >
-                <img
-                  src={resolveMediaUrl(course.thumbnail)}
-                  alt=""
-                  className="aspect-[16/9] w-full object-cover"
-                />
+                <div className="relative aspect-[16/9] w-full overflow-hidden">
+                  <Image
+                    src={resolveMediaUrl(course.thumbnail)}
+                    alt=""
+                    fill
+                    sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                    className="object-cover"
+                  />
+                </div>
                 <div className="p-4 sm:p-5">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-xs font-semibold uppercase tracking-wide text-brand-teal">
@@ -102,7 +102,7 @@ export default async function InstructorCoursesPage() {
                   </h2>
                   <p className="mt-1 text-sm text-muted">
                     {course._count.enrollments.toLocaleString()} students ·{" "}
-                    {formatPrice(course.price)}
+                    {formatCoursePrice(course)}
                   </p>
                   <div className="mt-4">
                     <ProgressBar

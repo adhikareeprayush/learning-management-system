@@ -1,5 +1,7 @@
+import type { PaymentStatus, Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
+import { formatCoursePrice } from "@/lib/pricing";
 
 const MONTH_LABELS = [
   "Jan",
@@ -109,6 +111,8 @@ function computeStreakDays(completionDates: Date[], now = new Date()) {
   );
   const cursor = new Date(now);
   cursor.setHours(0, 0, 0, 0);
+  // Nothing done yet today doesn't break the streak until the day is over.
+  if (!dayKeys.has(cursor.getTime())) cursor.setDate(cursor.getDate() - 1);
   let streak = 0;
   while (dayKeys.has(cursor.getTime())) {
     streak += 1;
@@ -178,12 +182,13 @@ export async function getStudentDashboardData(
   }, 0) / 60;
 
   const courseIds = enrollments.map((e) => e.course.id);
+  // No `take` here: submitted assignments are filtered out below, so limiting
+  // first would undercount what's still due.
   const assignments = courseIds.length
     ? await prisma.assignment.findMany({
         where: { courseId: { in: courseIds }, dueDate: { gte: new Date() } },
         include: { course: { select: { title: true } } },
         orderBy: { dueDate: "asc" },
-        take: 5,
       })
     : [];
 
@@ -198,17 +203,18 @@ export async function getStudentDashboardData(
     submissions.filter((s) => s.status !== "PENDING").map((s) => s.assignmentId),
   );
 
-  const upcomingDeadlines = assignments
-    .filter((a) => a.dueDate && !submittedIds.has(a.id))
-    .map((a) => ({
-      id: a.id,
-      title: a.title,
-      course: a.course.title,
-      due: formatDue(a.dueDate!),
-      priority: priorityFromDue(a.dueDate!),
-    }));
+  const outstandingAssignments = assignments.filter(
+    (a) => a.dueDate && !submittedIds.has(a.id),
+  );
+  const dueCount = outstandingAssignments.length;
 
-  const dueCount = upcomingDeadlines.length;
+  const upcomingDeadlines = outstandingAssignments.slice(0, 5).map((a) => ({
+    id: a.id,
+    title: a.title,
+    course: a.course.title,
+    due: formatDue(a.dueDate!),
+    priority: priorityFromDue(a.dueDate!),
+  }));
 
   const recentProgress = await prisma.lessonProgress.findMany({
     where: { studentId, completed: true },
@@ -390,25 +396,50 @@ export async function getInstructorDashboardData(
   });
 
   const months = lastMonths(6);
+  // Single query for the whole window, then bucket in JS (avoids one COUNT per month).
+  const trendRows = courseIds.length
+    ? await prisma.enrollment.findMany({
+        where: {
+          courseId: { in: courseIds },
+          enrolledAt: { gte: months[0].start, lte: months[months.length - 1].end },
+        },
+        select: { enrolledAt: true },
+      })
+    : [];
   const enrollmentTrend = {
     categories: months.map((m) => m.label),
     series: [
       {
         name: "Enrollments",
-        data: await Promise.all(
-          months.map(async (m) => {
-            if (!courseIds.length) return 0;
-            return prisma.enrollment.count({
-              where: {
-                courseId: { in: courseIds },
-                enrolledAt: { gte: m.start, lte: m.end },
-              },
-            });
-          }),
+        data: months.map(
+          (m) =>
+            trendRows.filter(
+              (r) => r.enrolledAt >= m.start && r.enrolledAt <= m.end,
+            ).length,
         ),
       },
     ],
   };
+
+  const revenueRows = courseIds.length
+    ? await prisma.payment.groupBy({
+        by: ["courseId"],
+        where: { courseId: { in: courseIds }, status: "COMPLETED" },
+        _sum: { amount: true },
+      })
+    : [];
+  const titleById = new Map(courses.map((c) => [c.id, c.title]));
+  const revenueByCourse = revenueRows
+    .map((row) => ({
+      title: titleById.get(row.courseId) ?? "Course",
+      amountPaisa: row._sum.amount ?? 0,
+    }))
+    .filter((row) => row.amountPaisa > 0)
+    .sort((a, b) => b.amountPaisa - a.amountPaisa);
+  const topRevenue = revenueByCourse.slice(0, 4);
+  const otherRevenue = revenueByCourse
+    .slice(4)
+    .reduce((sum, row) => sum + row.amountPaisa, 0);
 
   const instructorCourses = courses.slice(0, 4).map((c) => {
     const avgProgress =
@@ -473,9 +504,17 @@ export async function getInstructorDashboardData(
       enrolled: e.enrolledAt.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     })),
     enrollmentTrend,
+    /** Completed payments only; amounts are NPR paisa. */
     revenueMix: {
-      labels: courses.slice(0, 4).map((c) => c.title.split(" ").slice(0, 2).join(" ")),
-      series: courses.slice(0, 4).map((c) => c._count.enrollments * (c.price / 100)),
+      labels: [
+        ...topRevenue.map((row) => row.title),
+        ...(otherRevenue > 0 ? ["Other courses"] : []),
+      ],
+      series: [
+        ...topRevenue.map((row) => row.amountPaisa),
+        ...(otherRevenue > 0 ? [otherRevenue] : []),
+      ],
+      totalPaisa: revenueByCourse.reduce((sum, row) => sum + row.amountPaisa, 0),
     },
     instructorActivity: recentStudents.slice(0, 4).map((e) => ({
       id: e.id,
@@ -485,55 +524,62 @@ export async function getInstructorDashboardData(
   };
 }
 
+type RoleKey = Role;
+const ROLE_LABELS: Record<RoleKey, string> = {
+  STUDENT: "Student",
+  INSTRUCTOR: "Instructor",
+  ADMIN: "Admin",
+};
+
+/**
+ * Accounts by User.role — the same field the admin Users page filters on, so
+ * dashboard numbers match what the linked lists show.
+ */
+async function countUsersByRole(where: Prisma.UserWhereInput = {}) {
+  const rows = await prisma.user.groupBy({
+    by: ["role"],
+    where,
+    _count: { _all: true },
+  });
+  const counts: Record<RoleKey, number> = { STUDENT: 0, INSTRUCTOR: 0, ADMIN: 0 };
+  for (const row of rows) counts[row.role] = row._count._all;
+  return counts;
+}
+
 export async function getAdminDashboardData(organizationId: string) {
-  const orgMemberFilter = { organizationId };
   const orgCourseFilter = { organizationId };
   const orgEnrollmentFilter = { course: { organizationId } };
 
-  const [userCount, courseCount, enrollmentCount, inReviewCount, students, instructors] =
+  const months = lastMonths(6);
+  const windowStart = months[0]!.start;
+
+  const [roleCounts, courseCount, enrollmentCount, inReviewCount, baseline, windowUsers] =
     await Promise.all([
-      prisma.organizationMember.count({ where: orgMemberFilter }),
+      countUsersByRole(),
       prisma.course.count({ where: orgCourseFilter }),
       prisma.enrollment.count({ where: orgEnrollmentFilter }),
       prisma.course.count({ where: { organizationId, status: "IN_REVIEW" } }),
-      prisma.organizationMember.count({ where: { organizationId, role: "STUDENT" } }),
-      prisma.organizationMember.count({
-        where: { organizationId, role: { in: ["INSTRUCTOR", "ORG_ADMIN"] } },
+      countUsersByRole({ createdAt: { lt: windowStart } }),
+      prisma.user.findMany({
+        where: { createdAt: { gte: windowStart } },
+        select: { role: true, createdAt: true },
       }),
     ]);
 
-  const months = lastMonths(6);
+  const students = roleCounts.STUDENT;
+  const instructors = roleCounts.INSTRUCTOR;
+  const admins = roleCounts.ADMIN;
+  const userCount = students + instructors + admins;
+
+  const cumulative = (role: RoleKey, end: Date) =>
+    baseline[role] +
+    windowUsers.filter((user) => user.role === role && user.createdAt <= end).length;
+
   const platformGrowth = {
     categories: months.map((m) => m.label),
     series: [
-      {
-        name: "Students",
-        data: await Promise.all(
-          months.map((m) =>
-            prisma.organizationMember.count({
-              where: {
-                organizationId,
-                role: "STUDENT",
-                createdAt: { lte: m.end },
-              },
-            }),
-          ),
-        ),
-      },
-      {
-        name: "Instructors",
-        data: await Promise.all(
-          months.map((m) =>
-            prisma.organizationMember.count({
-              where: {
-                organizationId,
-                role: { in: ["INSTRUCTOR", "ORG_ADMIN"] },
-                createdAt: { lte: m.end },
-              },
-            }),
-          ),
-        ),
-      },
+      { name: "Students", data: months.map((m) => cumulative("STUDENT", m.end)) },
+      { name: "Instructors", data: months.map((m) => cumulative("INSTRUCTOR", m.end)) },
     ],
   };
 
@@ -573,11 +619,10 @@ export async function getAdminDashboardData(organizationId: string) {
     orderBy: { updatedAt: "desc" },
   });
 
-  const recentUsers = await prisma.organizationMember.findMany({
-    where: { organizationId },
+  const recentUsers = await prisma.user.findMany({
     orderBy: { createdAt: "desc" },
     take: 5,
-    include: { user: { select: { id: true, name: true, role: true, createdAt: true } } },
+    select: { id: true, name: true, role: true, createdAt: true },
   });
 
   return {
@@ -586,7 +631,7 @@ export async function getAdminDashboardData(organizationId: string) {
         id: "users",
         label: "Total users",
         value: String(userCount),
-        delta: `${students} students`,
+        delta: `${students} students · ${admins} admin${admins === 1 ? "" : "s"}`,
         tone: "purple" as const,
       },
       {
@@ -607,18 +652,14 @@ export async function getAdminDashboardData(organizationId: string) {
         id: "instructors",
         label: "Instructors",
         value: String(instructors),
-        delta: "Active coaches",
+        delta: "Instructor accounts",
         tone: "mint" as const,
       },
     ],
     platformGrowth,
     roleDistribution: {
       labels: ["Students", "Instructors", "Admins"],
-      series: [
-        students,
-        instructors,
-        userCount - students - instructors,
-      ],
+      series: [students, instructors, admins],
     },
     moderationQueue: moderationQueue.map((c) => ({
       id: c.id,
@@ -627,10 +668,10 @@ export async function getAdminDashboardData(organizationId: string) {
       status: c.status,
       submitted: c.updatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     })),
-    adminActivity: recentUsers.map((m) => ({
-      id: m.user.id,
-      text: `${m.user.name} joined as ${m.role.toLowerCase()}`,
-      time: m.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    adminActivity: recentUsers.map((user) => ({
+      id: user.id,
+      text: `${user.name} signed up · ${ROLE_LABELS[user.role]}`,
+      time: user.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     })),
     engagementWeekly,
   };
@@ -719,8 +760,10 @@ function periodBuckets(key: ReportPeriodKey) {
       const bucketStart = new Date(start);
       bucketStart.setDate(start.getDate() + i * 7);
       const bucketEnd = new Date(bucketStart);
-      bucketEnd.setDate(bucketStart.getDate() + 6);
-      if (bucketEnd > end) bucketEnd.setTime(end.getTime());
+      bucketEnd.setDate(bucketStart.getDate() + 7);
+      bucketEnd.setTime(bucketEnd.getTime() - 1);
+      // 30 days don't split evenly into weeks; the last bucket takes the remainder.
+      if (i === 3 || bucketEnd > end) bucketEnd.setTime(end.getTime());
       buckets.push({
         label: `W${i + 1}`,
         start: bucketStart,
@@ -766,20 +809,22 @@ export async function getFeaturedCoursesForHome(organizationId: string) {
   }
 
   return courses.map((course) => {
+    // 0 = no reviews yet; CourseCard hides the stars rather than faking 5.
     const avgRating =
       course.reviews.length === 0
-        ? 5
+        ? 0
         : Math.round(
-            course.reviews.reduce((sum, r) => sum + r.rating, 0) /
-              course.reviews.length,
-          );
+            (course.reviews.reduce((sum, r) => sum + r.rating, 0) /
+              course.reviews.length) *
+              10,
+          ) / 10;
     return {
       id: course.slug,
       title: course.title,
       image: resolveMediaUrl(course.thumbnail),
       students: formatStudentCount(course._count.enrollments),
       duration: formatCourseDuration(course.duration),
-      price: `$${(course.price / 100).toFixed(2)}`,
+      price: formatCoursePrice(course),
       category: course.category ?? undefined,
       date: course.createdAt.toLocaleDateString("en-US", {
         month: "2-digit",
@@ -787,6 +832,7 @@ export async function getFeaturedCoursesForHome(organizationId: string) {
         year: "numeric",
       }),
       rating: avgRating,
+      reviewCount: course.reviews.length,
     };
   });
 }
@@ -896,21 +942,26 @@ export async function getInstructorAnalyticsData(
   };
 
   const months = lastMonths(6);
+  // Single query for the whole window, then bucket in JS (avoids one COUNT per month).
+  const trendRows = courseIds.length
+    ? await prisma.enrollment.findMany({
+        where: {
+          courseId: { in: courseIds },
+          enrolledAt: { gte: months[0].start, lte: months[months.length - 1].end },
+        },
+        select: { enrolledAt: true },
+      })
+    : [];
   const enrollmentTrend = {
     categories: months.map((m) => m.label),
     series: [
       {
         name: "Enrollments",
-        data: await Promise.all(
-          months.map(async (m) => {
-            if (!courseIds.length) return 0;
-            return prisma.enrollment.count({
-              where: {
-                courseId: { in: courseIds },
-                enrolledAt: { gte: m.start, lte: m.end },
-              },
-            });
-          }),
+        data: months.map(
+          (m) =>
+            trendRows.filter(
+              (r) => r.enrolledAt >= m.start && r.enrolledAt <= m.end,
+            ).length,
         ),
       },
     ],
@@ -946,6 +997,83 @@ export async function getInstructorAnalyticsData(
   };
 }
 
+function countInBuckets<T>(
+  rows: T[],
+  buckets: DayBucket[],
+  dateOf: (row: T) => Date | null,
+) {
+  return buckets.map(
+    (bucket) =>
+      rows.filter((row) => {
+        const at = dateOf(row);
+        return at !== null && at >= bucket.start && at <= bucket.end;
+      }).length,
+  );
+}
+
+async function getRevenueReport(organizationId: string, start: Date, end: Date) {
+  const completed: Prisma.PaymentWhereInput = {
+    status: "COMPLETED",
+    course: { organizationId },
+  };
+
+  const [allTime, inPeriod] = await Promise.all([
+    prisma.payment.groupBy({
+      by: ["courseId"],
+      where: completed,
+      _sum: { amount: true },
+    }),
+    prisma.payment.findMany({
+      where: {
+        ...completed,
+        OR: [
+          { completedAt: { gte: start, lte: end } },
+          // Older rows approved before completedAt was recorded.
+          { completedAt: null, updatedAt: { gte: start, lte: end } },
+        ],
+      },
+      select: { courseId: true, amount: true },
+    }),
+  ]);
+
+  const courseTitles = allTime.length
+    ? await prisma.course.findMany({
+        where: { id: { in: allTime.map((row) => row.courseId) } },
+        select: { id: true, title: true },
+      })
+    : [];
+  const titleById = new Map(courseTitles.map((course) => [course.id, course.title]));
+
+  const periodByCourse = new Map<string, { paisa: number; count: number }>();
+  for (const payment of inPeriod) {
+    const entry = periodByCourse.get(payment.courseId) ?? { paisa: 0, count: 0 };
+    entry.paisa += payment.amount;
+    entry.count += 1;
+    periodByCourse.set(payment.courseId, entry);
+  }
+
+  const byCourse = allTime
+    .map((row) => ({
+      courseId: row.courseId,
+      title: titleById.get(row.courseId) ?? "Deleted course",
+      periodPaisa: periodByCourse.get(row.courseId)?.paisa ?? 0,
+      periodPayments: periodByCourse.get(row.courseId)?.count ?? 0,
+      totalPaisa: row._sum?.amount ?? 0,
+    }))
+    .sort((a, b) => b.periodPaisa - a.periodPaisa || b.totalPaisa - a.totalPaisa);
+
+  return {
+    periodPaisa: inPeriod.reduce((sum, payment) => sum + payment.amount, 0),
+    periodPayments: inPeriod.length,
+    totalPaisa: byCourse.reduce((sum, row) => sum + row.totalPaisa, 0),
+    byCourse,
+  };
+}
+
+function paisaToRupees(paisa: number) {
+  return (paisa / 100).toFixed(2);
+}
+
 export async function getAdminReportsData(
   organizationId: string,
   period: ReportPeriodKey,
@@ -958,8 +1086,11 @@ export async function getAdminReportsData(
     enrollmentsInPeriod,
     progressInPeriod,
     allEnrollments,
-    studentsInPeriod,
-    instructorsInPeriod,
+    newUsers,
+    roleCounts,
+    totalCourses,
+    totalEnrollments,
+    revenue,
   ] = await Promise.all([
     prisma.enrollment.count({
       where: { ...orgEnrollmentFilter, enrolledAt: { gte: start, lte: end } },
@@ -972,6 +1103,7 @@ export async function getAdminReportsData(
       },
       select: {
         studentId: true,
+        completedAt: true,
         lesson: { select: { duration: true } },
       },
     }),
@@ -979,16 +1111,14 @@ export async function getAdminReportsData(
       where: orgEnrollmentFilter,
       select: { progress: true, course: { select: { category: true } } },
     }),
-    prisma.organizationMember.count({
-      where: { organizationId, role: "STUDENT", createdAt: { gte: start, lte: end } },
+    prisma.user.findMany({
+      where: { createdAt: { gte: start, lte: end } },
+      select: { role: true, createdAt: true },
     }),
-    prisma.organizationMember.count({
-      where: {
-        organizationId,
-        role: { in: ["INSTRUCTOR", "ORG_ADMIN"] },
-        createdAt: { gte: start, lte: end },
-      },
-    }),
+    countUsersByRole(),
+    prisma.course.count({ where: { organizationId } }),
+    prisma.enrollment.count({ where: orgEnrollmentFilter }),
+    getRevenueReport(organizationId, start, end),
   ]);
 
   const activeStudentIds = new Set(progressInPeriod.map((p) => p.studentId));
@@ -1017,41 +1147,11 @@ export async function getAdminReportsData(
     series: [...categoryMap.values()].slice(0, 5),
   };
 
-  const growthStudents = await Promise.all(
-    buckets.map((bucket) =>
-      prisma.organizationMember.count({
-        where: {
-          organizationId,
-          role: "STUDENT",
-          createdAt: { gte: bucket.start, lte: bucket.end },
-        },
-      }),
-    ),
-  );
-
-  const growthInstructors = await Promise.all(
-    buckets.map((bucket) =>
-      prisma.organizationMember.count({
-        where: {
-          organizationId,
-          role: { in: ["INSTRUCTOR", "ORG_ADMIN"] },
-          createdAt: { gte: bucket.start, lte: bucket.end },
-        },
-      }),
-    ),
-  );
-
-  const sessionCounts = await Promise.all(
-    buckets.map((bucket) =>
-      prisma.lessonProgress.count({
-        where: {
-          completed: true,
-          completedAt: { gte: bucket.start, lte: bucket.end },
-          lesson: { course: { organizationId } },
-        },
-      }),
-    ),
-  );
+  const newStudents = newUsers.filter((user) => user.role === "STUDENT");
+  const newInstructors = newUsers.filter((user) => user.role === "INSTRUCTOR");
+  const growthStudents = countInBuckets(newStudents, buckets, (user) => user.createdAt);
+  const growthInstructors = countInBuckets(newInstructors, buckets, (user) => user.createdAt);
+  const sessionCounts = countInBuckets(progressInPeriod, buckets, (row) => row.completedAt);
 
   const periodLabels: Record<ReportPeriodKey, string> = {
     "7d": "Last 7 days",
@@ -1059,28 +1159,27 @@ export async function getAdminReportsData(
     "6m": "Last 6 months",
   };
 
-  const [totalStudents, totalInstructors, totalCourses, totalEnrollments] =
-    await Promise.all([
-      prisma.organizationMember.count({ where: { organizationId, role: "STUDENT" } }),
-      prisma.organizationMember.count({
-        where: { organizationId, role: { in: ["INSTRUCTOR", "ORG_ADMIN"] } },
-      }),
-      prisma.course.count({ where: { organizationId } }),
-      prisma.enrollment.count({ where: orgEnrollmentFilter }),
-    ]);
-
   const exportRows = [
     ["Metric", "Value", "Period"],
     ["Active learners", String(activeStudentIds.size), period],
     ["New enrollments", String(enrollmentsInPeriod), period],
     ["Lesson hours completed", String(lessonHours), period],
+    ["Revenue (NPR)", paisaToRupees(revenue.periodPaisa), period],
+    ["Approved payments", String(revenue.periodPayments), period],
     ["Completion rate", `${completionRate}%`, "all time"],
-    ["Students (total)", String(totalStudents), "lifetime"],
-    ["Instructors (total)", String(totalInstructors), "lifetime"],
+    ["Students (total)", String(roleCounts.STUDENT), "lifetime"],
+    ["Instructors (total)", String(roleCounts.INSTRUCTOR), "lifetime"],
+    ["Admins (total)", String(roleCounts.ADMIN), "lifetime"],
     ["Courses (total)", String(totalCourses), "lifetime"],
     ["Enrollments (total)", String(totalEnrollments), "lifetime"],
-    ["New students", String(studentsInPeriod), period],
-    ["New instructors", String(instructorsInPeriod), period],
+    ["Revenue (NPR, total)", paisaToRupees(revenue.totalPaisa), "lifetime"],
+    ["New students", String(newStudents.length), period],
+    ["New instructors", String(newInstructors.length), period],
+    ...revenue.byCourse.map((row) => [
+      `Revenue (NPR) · ${row.title}`,
+      paisaToRupees(row.periodPaisa),
+      period,
+    ]),
   ];
 
   return {
@@ -1094,6 +1193,8 @@ export async function getAdminReportsData(
       completion: `${completionRate}%`,
       completionHint: "Platform average",
     },
+    /** Completed payments only; all amounts are NPR paisa. */
+    revenue,
     growth: {
       categories: buckets.map((b) => b.label),
       series: [
@@ -1108,4 +1209,75 @@ export async function getAdminReportsData(
     categoryShare,
     exportRows,
   };
+}
+
+export const ADMIN_PAYMENTS_PAGE_SIZE = 25;
+
+const adminPaymentInclude = {
+  user: { select: { id: true, name: true, email: true } },
+  course: { select: { id: true, title: true, slug: true } },
+  paymentMethod: { select: { id: true, label: true, type: true } },
+  reviewedBy: { select: { id: true, name: true } },
+} satisfies Prisma.PaymentInclude;
+
+type AdminPaymentRecord = Prisma.PaymentGetPayload<{ include: typeof adminPaymentInclude }>;
+
+export function serializeAdminPayment(payment: AdminPaymentRecord) {
+  return {
+    id: payment.id,
+    amount: payment.amount,
+    status: payment.status,
+    screenshotUrl: payment.screenshotUrl,
+    referenceNote: payment.referenceNote,
+    rejectionReason: payment.rejectionReason,
+    createdAt: payment.createdAt.toISOString(),
+    reviewedAt: payment.reviewedAt?.toISOString() ?? null,
+    user: payment.user,
+    course: payment.course,
+    paymentMethod: payment.paymentMethod,
+    reviewedBy: payment.reviewedBy,
+  };
+}
+
+export type AdminPaymentRow = ReturnType<typeof serializeAdminPayment>;
+
+/**
+ * "REVIEWED" = everything that has left the pending queue (the History tab).
+ * Fetches one extra row to report `hasMore` without a separate COUNT.
+ */
+export async function listAdminPayments(
+  organizationId: string,
+  {
+    status,
+    skip = 0,
+    take = ADMIN_PAYMENTS_PAGE_SIZE,
+  }: { status?: PaymentStatus | "REVIEWED"; skip?: number; take?: number } = {},
+) {
+  const rows = await prisma.payment.findMany({
+    where: {
+      course: { organizationId },
+      ...(status === "REVIEWED"
+        ? { status: { not: "PENDING" } }
+        : status
+          ? { status }
+          : {}),
+    },
+    orderBy: [{ createdAt: status === "PENDING" ? "asc" : "desc" }, { id: "asc" }],
+    skip,
+    take: take + 1,
+    include: adminPaymentInclude,
+  });
+
+  return {
+    payments: rows.slice(0, take).map(serializeAdminPayment),
+    hasMore: rows.length > take,
+  };
+}
+
+export async function getAdminPayment(organizationId: string, paymentId: string) {
+  const payment = await prisma.payment.findFirst({
+    where: { id: paymentId, course: { organizationId } },
+    include: adminPaymentInclude,
+  });
+  return payment ? serializeAdminPayment(payment) : null;
 }

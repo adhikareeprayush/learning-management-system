@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { FlashBanner } from "@/components/ui/flash-banner";
 import { Button } from "@/components/ui/button";
-import { parseQuizPayload } from "@/lib/lesson-resources";
+import { parsePublicQuizPayload } from "@/lib/lesson-resources";
 import type { LessonResourceType } from "@/types/lesson-resource";
 import { VideoPlayer } from "@/components/course/video-player";
 
@@ -48,7 +48,7 @@ function QuizTaker({
   description: string | null;
   latestAttempt?: StudentLessonResource["latestAttempt"];
 }) {
-  const payload = parseQuizPayload(description);
+  const payload = parsePublicQuizPayload(description);
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{
@@ -162,7 +162,7 @@ function QuizTaker({
               </div>
             </fieldset>
           ))}
-          <Button submit disabled={submitting}>
+          <Button submit loading={submitting}>
             {submitting ? "Submitting…" : `Submit quiz · ${title}`}
           </Button>
         </form>
@@ -204,7 +204,7 @@ export function LessonResourcesPanel({
               onClick={() => setActiveTab(resource.id)}
               className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition ${
                 isActive
-                  ? "bg-[#083f9b] text-white"
+                  ? "bg-brand-blue text-white"
                   : "border border-black/8 bg-surface text-[#324361] hover:bg-white"
               }`}
             >

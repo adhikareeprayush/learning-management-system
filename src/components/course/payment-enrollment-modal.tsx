@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState } from "react";
 import { Copy, ImageIcon, Loader2, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -49,35 +50,52 @@ export function PaymentEnrollmentModal({
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // The parent mounts this modal only while it is open, so methods load once
+  // per opening; state starts in the loading state.
   useEffect(() => {
     if (!open) return;
-
-    setLoadingMethods(true);
-    setError(null);
+    let cancelled = false;
     fetch("/api/payment-methods")
       .then(async (res) => {
         if (!res.ok) throw new Error(await responseError(res));
         const data = (await res.json()) as { methods?: PaymentMethodOption[] };
+        if (cancelled) return;
         setMethods(data.methods ?? []);
         setSelectedMethodId(data.methods?.[0]?.id ?? null);
       })
       .catch((err) => {
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : "Could not load payment methods");
       })
-      .finally(() => setLoadingMethods(false));
+      .finally(() => {
+        if (!cancelled) setLoadingMethods(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [open]);
 
+  // Release the previous object URL whenever the preview changes or on unmount.
   useEffect(() => {
-    if (!file) {
-      setPreviewUrl(null);
-      return;
+    if (!previewUrl) return;
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !submitting) onClose();
     }
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [file]);
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, submitting, onClose]);
 
   if (!open) return null;
+
+  function selectFile(next: File | null) {
+    setFile(next);
+    setPreviewUrl(next ? URL.createObjectURL(next) : null);
+  }
 
   const selected = methods.find((m) => m.id === selectedMethodId) ?? null;
 
@@ -110,6 +128,7 @@ export function PaymentEnrollmentModal({
       const form = new FormData();
       form.append("file", file);
       form.append("provider", "imagekit");
+      form.append("purpose", "payment-screenshot");
 
       const uploadRes = await fetch("/api/upload", { method: "POST", body: form });
       if (!uploadRes.ok) throw new Error(await responseError(uploadRes));
@@ -138,7 +157,12 @@ export function PaymentEnrollmentModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center">
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !submitting) onClose();
+      }}
+    >
       <div
         role="dialog"
         aria-modal="true"
@@ -226,9 +250,12 @@ export function PaymentEnrollmentModal({
 
                   {selected.qrImageUrl ? (
                     <div className="mt-4 flex flex-col items-center gap-2 sm:flex-row sm:items-start">
-                      <img
+                      <Image
                         src={resolveMediaUrl(selected.qrImageUrl)}
                         alt={`${selected.label} QR code`}
+                        width={160}
+                        height={160}
+                        unoptimized
                         className="size-40 rounded-xl border border-black/5 bg-white object-contain p-2"
                       />
                       <p className="text-xs text-muted sm:max-w-[12rem]">
@@ -259,10 +286,13 @@ export function PaymentEnrollmentModal({
                 </span>
                 <label className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-black/10 bg-white px-4 py-8 transition hover:border-brand-purple/40">
                   {previewUrl ? (
-                    <img
+                    <Image
                       src={previewUrl}
                       alt="Payment screenshot preview"
-                      className="max-h-48 rounded-lg object-contain"
+                      width={384}
+                      height={192}
+                      unoptimized
+                      className="h-auto max-h-48 w-auto rounded-lg object-contain"
                     />
                   ) : (
                     <>
@@ -277,7 +307,7 @@ export function PaymentEnrollmentModal({
                     type="file"
                     accept="image/jpeg,image/png,image/webp,image/gif"
                     className="sr-only"
-                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                    onChange={(e) => selectFile(e.target.files?.[0] ?? null)}
                   />
                 </label>
                 {file ? (
@@ -286,7 +316,7 @@ export function PaymentEnrollmentModal({
                     {file.name}
                     <button
                       type="button"
-                      onClick={() => setFile(null)}
+                      onClick={() => selectFile(null)}
                       className="ml-1 text-brand-purple hover:underline"
                     >
                       Remove
@@ -306,7 +336,8 @@ export function PaymentEnrollmentModal({
             <Button
               type="button"
               onClick={handleSubmit}
-              disabled={submitting || loadingMethods}
+              loading={submitting}
+              disabled={loadingMethods}
             >
               {submitting ? "Submitting…" : "Submit payment proof"}
             </Button>

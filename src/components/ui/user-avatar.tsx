@@ -45,38 +45,24 @@ function UserAvatarComponent({
   const initials = getInitials(name);
   const imageSrc = image?.trim() || null;
 
-  const [showPhoto, setShowPhoto] = useState(
-    () => (imageSrc ? isAvatarLoaded(imageSrc) : false),
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(() =>
+    imageSrc && isAvatarLoaded(imageSrc) ? imageSrc : null,
   );
+  const showPhoto =
+    imageSrc !== null && (loadedSrc === imageSrc || isAvatarLoaded(imageSrc));
 
+  // An <img> that finished before hydration never fires onLoad, so probe with a
+  // detached Image; its load event is always dispatched, even from cache.
   useEffect(() => {
-    if (!imageSrc) {
-      setShowPhoto(false);
-      return;
-    }
-
-    if (isAvatarLoaded(imageSrc)) {
-      setShowPhoto(true);
-      return;
-    }
-
+    if (!imageSrc || isAvatarLoaded(imageSrc)) return;
     const probe = new window.Image();
-    probe.src = imageSrc;
-    if (probe.complete) {
-      markAvatarLoaded(imageSrc);
-      setShowPhoto(true);
-      return;
-    }
-
     probe.onload = () => {
       markAvatarLoaded(imageSrc);
-      setShowPhoto(true);
+      setLoadedSrc(imageSrc);
     };
-    probe.onerror = () => setShowPhoto(false);
-
+    probe.src = imageSrc;
     return () => {
       probe.onload = null;
-      probe.onerror = null;
     };
   }, [imageSrc]);
 
@@ -102,7 +88,7 @@ function UserAvatarComponent({
           loading="eager"
           onLoad={() => {
             markAvatarLoaded(imageSrc);
-            setShowPhoto(true);
+            setLoadedSrc(imageSrc);
           }}
           className={`absolute inset-0 size-full object-cover ${
             showPhoto ? "opacity-100" : "opacity-0"

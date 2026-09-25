@@ -18,3 +18,10 @@ export function coursePaymentAmountPaisa(course: { price: number; priceNpr: numb
 export function courseRequiresPayment(course: { price: number; priceNpr: number }) {
   return coursePaymentAmountPaisa(course) >= 1000;
 }
+
+/** Display price for a course: what the student is actually charged, in NPR. */
+export function formatCoursePrice(course: { price: number; priceNpr: number }) {
+  return courseRequiresPayment(course)
+    ? formatNprFromPaisa(coursePaymentAmountPaisa(course))
+    : "Free";
+}

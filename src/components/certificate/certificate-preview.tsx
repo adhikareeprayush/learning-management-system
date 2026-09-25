@@ -1,334 +1,398 @@
-"use client";
-
-import { forwardRef } from "react";
-import { CERTIFICATE } from "@/lib/certificate-design";
-import { CertificateMark } from "@/components/certificate/certificate-mark";
+import type { CSSProperties } from "react";
+import {
+  CERTIFICATE,
+  CERTIFICATE_FONTS,
+  CERTIFICATE_LAYOUT as L,
+  CERTIFICATE_SEAL_TEXT,
+  LOGO_MARK,
+  type CertificateContent,
+} from "@/lib/certificate-design";
+import {
+  CertificateMark,
+  LogoMarkShapes,
+} from "@/components/certificate/certificate-mark";
 
 type CertificatePreviewProps = {
-  studentName: string;
-  courseTitle: string;
-  instructorName: string;
-  category?: string | null;
-  issuedAt: string;
-  credentialId: string;
+  content: CertificateContent;
   "data-certificate-id"?: string;
-  exportMode?: boolean;
 };
 
-function CornerBracket({ className }: { className: string }) {
-  return (
-    <span
-      className={`pointer-events-none absolute size-5 border-[#04016C]/35 ${className}`}
-      aria-hidden
-    />
-  );
+/** Length in PDF points, scaled to the rendered width of the certificate. */
+const u = (points: number) => `calc(var(--cert-unit) * ${points})`;
+/** Hairlines stay visible when the card is small. */
+const hairline = (points: number) => `max(1px, ${u(points)})`;
+
+const CX = L.page.width / 2;
+
+/**
+ * The browser has no access to pdf-lib's font metrics, so approximate the
+ * PDF's shrink-to-fit with average glyph widths for each face.
+ */
+function fittedSize(text: string, max: number, min: number, width: number, em: number) {
+  return Math.max(min, Math.min(max, width / (Math.max(text.length, 1) * em)));
 }
 
 /**
- * Formal certificate layout:
- * issuer header → credential label → recipient (dominant) → achievement →
- * signature / seal / date band → verification id
- * with intentional whitespace between bands.
+ * A4 landscape certificate drawn on the same point grid as the PDF
+ * (lib/certificate-pdf.ts), scaled to the container width.
  */
-export const CertificatePreview = forwardRef<
-  HTMLDivElement,
-  CertificatePreviewProps
->(function CertificatePreview(
-  {
-    studentName,
-    courseTitle,
-    instructorName,
-    category,
-    issuedAt,
-    credentialId,
-    exportMode = false,
-    "data-certificate-id": certificateDomId,
-  },
-  ref,
-) {
-  const issued = new Date(issuedAt).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+export function CertificatePreview({
+  content,
+  "data-certificate-id": certificateDomId,
+}: CertificatePreviewProps) {
+  const nameSize = fittedSize(content.studentName, L.nameSize, L.nameMinSize, L.contentWidth, 0.43);
+  const titleSize = fittedSize(content.title, L.titleSize, L.titleMinSize, L.contentWidth - 40, 0.55);
+  const signatureSize = (text: string) => fittedSize(text, 18, 13, L.signatureColumnWidth, 0.4);
+
+  const columns = [
+    { x: CX - L.signatureOffset, ...content.signatory },
+    { x: CX + L.signatureOffset, name: content.issuedOn, role: "Date issued" },
+  ];
+
+  const smallCaps: CSSProperties = {
+    fontFamily: CERTIFICATE_FONTS.ui,
+    fontWeight: 600,
+    textTransform: "uppercase",
+    lineHeight: 1,
+    whiteSpace: "nowrap",
+  };
 
   return (
     <div
-      ref={ref}
       data-certificate-root
       data-certificate-id={certificateDomId}
-      className={
-        exportMode
-          ? "relative box-border overflow-hidden"
-          : "relative aspect-[1.414/1] min-h-[300px]"
-      }
+      role="img"
+      aria-label={`${content.label}: ${content.studentName}, ${content.title}`}
+      className="relative w-full select-none overflow-hidden"
       style={{
+        aspectRatio: `${L.page.width} / ${L.page.height}`,
         backgroundColor: CERTIFICATE.paper,
-        color: CERTIFICATE.ink,
-        ...(exportMode
-          ? {
-              width: 842,
-              height: 595,
-              fontFamily: "Georgia, 'Times New Roman', Times, serif",
-            }
-          : null),
+        containerType: "inline-size",
       }}
     >
       <div
-        className="pointer-events-none absolute inset-0 opacity-[0.28]"
-        style={{
-          backgroundImage:
-            "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E\")",
-        }}
-        aria-hidden
-      />
-
-      <div
-        className={`absolute border border-[#04016C]/20 ${
-          exportMode ? "" : "inset-3 sm:inset-4"
-        }`}
-        style={exportMode ? { inset: 22 } : undefined}
-      />
-      <div
-        className={`absolute border border-[#2AAA94]/25 ${
-          exportMode ? "" : "inset-[14px] sm:inset-[20px]"
-        }`}
-        style={exportMode ? { inset: 38 } : undefined}
-      />
-
-      <CornerBracket className="left-3 top-3 border-l-2 border-t-2 sm:left-4 sm:top-4" />
-      <CornerBracket className="right-3 top-3 border-r-2 border-t-2 sm:right-4 sm:top-4" />
-      <CornerBracket className="bottom-3 left-3 border-b-2 border-l-2 sm:bottom-4 sm:left-4" />
-      <CornerBracket className="right-3 bottom-3 border-b-2 border-r-2 sm:bottom-4 sm:right-4" />
-
-      <div
-        className={
-          exportMode
-            ? "relative flex h-full flex-col"
-            : "relative flex h-full flex-col px-6 py-5 sm:px-9 sm:py-7"
-        }
-        style={exportMode ? { padding: "44px 64px 36px" } : undefined}
+        className="absolute inset-0"
+        style={{ "--cert-unit": `calc(100cqw / ${L.page.width})` } as CSSProperties}
       >
-        {/* ── Band 1: Issuer ── */}
-        <header className="flex shrink-0 flex-col items-center">
-          <div className={`flex items-center ${exportMode ? "gap-3" : "gap-2.5"}`}>
-            <CertificateMark
-              className={exportMode ? "size-10" : "size-8 sm:size-9"}
-            />
-            <span
-              className={`font-brand leading-none ${
-                exportMode ? "text-[22px]" : "text-lg sm:text-xl"
-              }`}
-              style={{ color: CERTIFICATE.navy }}
-            >
-              Edu<span style={{ color: CERTIFICATE.teal }}>jarr</span>
-            </span>
-          </div>
-
-          <div
-            className={`w-full max-w-[200px] border-t ${
-              exportMode ? "mt-5" : "mt-3 sm:mt-4"
-            }`}
-            style={{ borderColor: CERTIFICATE.rule }}
-          />
-
-          <p
-            className={`font-sans font-semibold uppercase tracking-[0.32em] ${
-              exportMode
-                ? "mt-4 text-[11px]"
-                : "mt-3 text-[8px] sm:mt-3.5 sm:text-[10px]"
-            }`}
-            style={{ color: CERTIFICATE.navy }}
-          >
-            Certificate of Completion
-          </p>
-
-          <div
-            className={`flex items-center gap-2.5 ${
-              exportMode ? "mt-4" : "mt-2.5 sm:mt-3"
-            }`}
+        {/* Frame */}
+        <div
+          className="absolute"
+          style={{ inset: u(L.frameOuter), border: `${hairline(0.9)} solid ${CERTIFICATE.navy}` }}
+        />
+        <div
+          className="absolute"
+          style={{
+            inset: u(L.frameInner),
+            border: `${hairline(0.45)} solid ${CERTIFICATE.teal}b3`,
+          }}
+        />
+        {[
+          { left: L.frameOuter, top: L.frameOuter },
+          { left: L.page.width - L.frameOuter, top: L.frameOuter },
+          { left: L.frameOuter, top: L.page.height - L.frameOuter },
+          { left: L.page.width - L.frameOuter, top: L.page.height - L.frameOuter },
+        ].map((corner) => (
+          <span
+            key={`${corner.left}-${corner.top}`}
+            className="absolute grid place-items-center rounded-full"
+            style={{
+              left: u(corner.left - L.cornerNode),
+              top: u(corner.top - L.cornerNode),
+              width: u(L.cornerNode * 2),
+              height: u(L.cornerNode * 2),
+              backgroundColor: CERTIFICATE.navy,
+            }}
           >
             <span
-              className={exportMode ? "h-px w-16" : "h-px w-10 sm:w-14"}
-              style={{ backgroundColor: CERTIFICATE.rule }}
-            />
-            <span
-              className={`rotate-45 border ${
-                exportMode ? "size-1.5" : "size-1 sm:size-1.5"
-              }`}
+              className="rounded-full"
               style={{
-                borderColor: `${CERTIFICATE.teal}99`,
-                backgroundColor: `${CERTIFICATE.teal}1a`,
+                width: u(L.cornerNode * 0.8),
+                height: u(L.cornerNode * 0.8),
+                backgroundColor: CERTIFICATE.mint,
               }}
             />
-            <span
-              className={exportMode ? "h-px w-16" : "h-px w-10 sm:w-14"}
-              style={{ backgroundColor: CERTIFICATE.rule }}
-            />
-          </div>
-        </header>
+          </span>
+        ))}
 
-        {/* ── Band 2: Recipient + achievement (optical center) ── */}
+        {/* Issuer */}
         <div
-          className={`flex min-h-0 flex-1 flex-col items-center justify-center text-center ${
-            exportMode ? "gap-0 px-8" : "gap-0"
-          }`}
+          className="absolute inset-x-0 flex items-center justify-center"
+          style={{ top: u(L.brandTop), transform: "translateY(-50%)", gap: u(4) }}
+        >
+          <CertificateMark
+            className="shrink-0"
+            style={{ width: u(L.markSize), height: u(L.markSize) }}
+          />
+          <span
+            style={{
+              fontFamily: CERTIFICATE_FONTS.brand,
+              fontWeight: 600,
+              fontSize: u(L.wordmarkSize),
+              lineHeight: 1,
+              color: CERTIFICATE.navy,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Convolution<span style={{ color: CERTIFICATE.teal }}> LMS</span>
+          </span>
+        </div>
+
+        <div
+          className="absolute inset-x-0 flex items-center justify-center"
+          style={{ top: u(L.labelTop - L.labelSize * 0.84), gap: u(14) }}
+        >
+          <span style={{ width: u(44), height: hairline(0.6), backgroundColor: CERTIFICATE.teal }} />
+          <span
+            style={{
+              ...smallCaps,
+              fontSize: u(L.labelSize),
+              letterSpacing: u(L.labelTracking),
+              marginRight: `calc(-1 * ${u(L.labelTracking)})`,
+              color: CERTIFICATE.navy,
+            }}
+          >
+            {content.label}
+          </span>
+          <span style={{ width: u(44), height: hairline(0.6), backgroundColor: CERTIFICATE.teal }} />
+        </div>
+
+        {/* Recipient and achievement, centred between header and footer */}
+        <div
+          className="absolute inset-x-0 flex flex-col items-center justify-center text-center"
+          style={{ top: u(L.bodyTop), height: u(L.bodyBottom - L.bodyTop) }}
         >
           <p
-            className={
-              exportMode ? "text-[13px]" : "text-[10px] sm:text-xs"
-            }
+            className="shrink-0"
             style={{
-              color: CERTIFICATE.muted,
-              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontFamily: CERTIFICATE_FONTS.serif,
               fontStyle: "italic",
+              fontWeight: 500,
+              fontSize: u(L.supportSize),
+              lineHeight: 1,
+              color: CERTIFICATE.muted,
             }}
           >
-            This certifies that
+            {content.presentedLine}
           </p>
-
           <p
-            className={`line-clamp-2 font-display leading-[1.15] ${
-              exportMode
-                ? "mt-3.5 text-[40px]"
-                : "mt-2 text-[1.35rem] sm:mt-2.5 sm:text-3xl"
-            }`}
-            style={{ color: CERTIFICATE.navy }}
+            className="line-clamp-2 shrink-0 break-words"
+            style={{
+              marginTop: u(10),
+              maxWidth: u(L.contentWidth),
+              fontFamily: CERTIFICATE_FONTS.serif,
+              fontWeight: 600,
+              fontSize: u(nameSize),
+              lineHeight: 1.08,
+              color: CERTIFICATE.navy,
+            }}
           >
-            {studentName}
+            {content.studentName}
           </p>
-
           <div
-            className={`flex flex-col items-center gap-0.5 ${
-              exportMode ? "mt-1.5" : "mt-1.5 sm:mt-2"
-            }`}
+            className="relative flex shrink-0 items-center"
+            style={{ marginTop: u(4), width: u(300), height: u(6) }}
+            aria-hidden
           >
-            <span
-              className={exportMode ? "h-px w-44" : "h-px w-28 sm:w-40"}
-              style={{ backgroundColor: "rgba(4,1,108,0.22)" }}
-            />
-            <span
-              className={exportMode ? "h-px w-32" : "h-px w-20 sm:w-28"}
-              style={{ backgroundColor: `${CERTIFICATE.teal}66` }}
-            />
+            {[-1, 1].map((dir) => (
+              <span
+                key={dir}
+                className="absolute"
+                style={{
+                  [dir < 0 ? "right" : "left"]: u(159),
+                  width: u(141),
+                  height: hairline(0.6),
+                  backgroundColor: `${CERTIFICATE.navy}4d`,
+                }}
+              />
+            ))}
+            {[
+              { left: 0, r: 1.3 },
+              { left: 150, r: 2.6 },
+              { left: 300, r: 1.3 },
+            ].map((dot) => (
+              <span
+                key={dot.left}
+                className="absolute rounded-full"
+                style={{
+                  left: u(dot.left - dot.r),
+                  width: u(dot.r * 2),
+                  height: u(dot.r * 2),
+                  backgroundColor: CERTIFICATE.teal,
+                }}
+              />
+            ))}
           </div>
-
           <p
-            className={
-              exportMode
-                ? "mt-2.5 text-[13px]"
-                : "mt-2 text-[10px] sm:mt-2.5 sm:text-xs"
-            }
+            className="shrink-0"
             style={{
-              color: CERTIFICATE.muted,
-              fontFamily: "Georgia, 'Times New Roman', serif",
+              marginTop: u(14),
+              fontFamily: CERTIFICATE_FONTS.serif,
               fontStyle: "italic",
+              fontWeight: 500,
+              fontSize: u(L.supportSize),
+              lineHeight: 1,
+              color: CERTIFICATE.muted,
             }}
           >
-            has successfully completed
+            {content.completingLine}
           </p>
-
           <p
-            className={`line-clamp-3 max-w-[36ch] break-words font-semibold leading-snug ${
-              exportMode
-                ? "mt-3 text-[20px]"
-                : "mt-2 text-sm sm:mt-2.5 sm:text-lg"
-            }`}
-            style={{ color: CERTIFICATE.ink }}
+            className="line-clamp-2 shrink-0 break-words"
+            style={{
+              marginTop: u(12),
+              maxWidth: u(L.contentWidth - 40),
+              fontFamily: CERTIFICATE_FONTS.brand,
+              fontWeight: 600,
+              fontSize: u(titleSize),
+              lineHeight: 1.32,
+              color: CERTIFICATE.ink,
+            }}
           >
-            {courseTitle}
+            {content.title}
           </p>
-
-          {category ? (
+          {content.meta ? (
             <p
-              className={`font-medium uppercase tracking-[0.2em] ${
-                exportMode
-                  ? "mt-3 text-[11px]"
-                  : "mt-2 text-[8px] sm:mt-2.5 sm:text-[10px]"
-              }`}
-              style={{ color: CERTIFICATE.teal }}
+              className="shrink-0"
+              style={{
+                ...smallCaps,
+                marginTop: u(13),
+                fontSize: u(L.metaSize),
+                letterSpacing: u(L.metaTracking),
+                color: CERTIFICATE.teal,
+              }}
             >
-              {category}
+              {content.meta}
             </p>
           ) : null}
         </div>
 
-        {/* ── Band 3: Signatures + seal (no full-width line through seal) ── */}
-        <footer
-          className={`shrink-0 ${
-            exportMode ? "mt-8 pt-2" : "mt-5 pt-1 sm:mt-6"
-          }`}
-        >
+        {/* Signatures */}
+        {columns.map((column) => (
           <div
-            className={`grid grid-cols-3 items-end ${
-              exportMode
-                ? "gap-10 text-[11px]"
-                : "gap-5 text-[8px] sm:gap-6 sm:text-[10px]"
-            }`}
+            key={column.role}
+            className="absolute flex flex-col items-center"
+            style={{
+              left: u(column.x - L.signatureColumnWidth / 2),
+              width: u(L.signatureColumnWidth),
+              top: u(L.signatureBaseline - 18),
+            }}
           >
-            <div className="min-w-0 text-left">
-              <div
-                className={exportMode ? "mb-3 border-b pb-1.5" : "mb-2 border-b pb-1"}
-                style={{ borderColor: CERTIFICATE.rule }}
-              />
-              <p
-                className="truncate font-semibold"
-                style={{ color: CERTIFICATE.ink }}
-              >
-                {instructorName}
-              </p>
-              <p className="mt-1" style={{ color: CERTIFICATE.muted }}>
-                Course instructor
-              </p>
-            </div>
-
-            <div className="flex flex-col items-center pb-0.5">
-              <div
-                className={`grid place-items-center rounded-full border-2 bg-white ${
-                  exportMode ? "size-16" : "size-11 sm:size-12"
-                }`}
-                style={{ borderColor: `${CERTIFICATE.teal}80` }}
-              >
-                <CertificateMark
-                  className={exportMode ? "size-8" : "size-5 sm:size-6"}
-                />
-              </div>
-              <p
-                className={`font-medium uppercase tracking-[0.18em] ${
-                  exportMode ? "mt-2.5 text-[9px]" : "mt-1.5 text-[7px] sm:text-[8px]"
-                }`}
-                style={{ color: CERTIFICATE.teal }}
-              >
-                Verified
-              </p>
-            </div>
-
-            <div className="min-w-0 text-right">
-              <div
-                className={exportMode ? "mb-3 border-b pb-1.5" : "mb-2 border-b pb-1"}
-                style={{ borderColor: CERTIFICATE.rule }}
-              />
-              <p className="font-semibold" style={{ color: CERTIFICATE.ink }}>
-                {issued}
-              </p>
-              <p className="mt-1" style={{ color: CERTIFICATE.muted }}>
-                Date issued
-              </p>
-            </div>
+            <p
+              className="w-full truncate text-center"
+              style={{
+                fontFamily: CERTIFICATE_FONTS.serif,
+                fontStyle: "italic",
+                fontWeight: 500,
+                fontSize: u(signatureSize(column.name)),
+                lineHeight: `${u(22)}`,
+                color: CERTIFICATE.navy,
+              }}
+            >
+              {column.name}
+            </p>
+            <span
+              className="w-full"
+              style={{
+                marginTop: u(L.signatureRuleGap - 4),
+                height: hairline(0.6),
+                backgroundColor: `${CERTIFICATE.navy}59`,
+              }}
+            />
+            <p
+              style={{
+                ...smallCaps,
+                marginTop: u(8),
+                fontSize: u(L.smallSize),
+                letterSpacing: u(1.8),
+                color: CERTIFICATE.muted,
+              }}
+            >
+              {column.role}
+            </p>
           </div>
+        ))}
 
-          <p
-            className={`text-center font-mono tracking-wide ${
-              exportMode
-                ? "mt-5 text-[10px]"
-                : "mt-3 text-[7px] sm:mt-3.5 sm:text-[9px]"
-            }`}
-            style={{ color: `${CERTIFICATE.muted}b3` }}
+        <CertificateSeal ringId={`seal-ring-${content.credentialId}`} />
+
+        {/* Credential */}
+        <p
+          className="absolute inset-x-0 flex justify-center"
+          style={{ top: u(L.credentialBaseline - L.smallSize * 0.9), gap: u(10), lineHeight: 1 }}
+        >
+          <span
+            style={{
+              ...smallCaps,
+              fontSize: u(L.smallSize),
+              letterSpacing: u(1.8),
+              color: CERTIFICATE.muted,
+            }}
           >
-            Credential ID · {credentialId}
-          </p>
-        </footer>
+            Credential ID
+          </span>
+          <span
+            style={{
+              fontFamily: CERTIFICATE_FONTS.ui,
+              fontWeight: 500,
+              fontSize: u(L.smallSize + 0.5),
+              letterSpacing: u(0.6),
+              color: CERTIFICATE.ink,
+            }}
+          >
+            {content.credentialId}
+          </span>
+        </p>
       </div>
     </div>
   );
-});
+}
+
+function CertificateSeal({ ringId }: { ringId: string }) {
+  const r = L.sealRadius;
+  const textRadius = r - 10;
+  const firstPhrase = CERTIFICATE_SEAL_TEXT.indexOf(" • ");
+  // Centre the first phrase over 12 o'clock, as in the PDF.
+  const startAngle = -((firstPhrase / CERTIFICATE_SEAL_TEXT.length) * 360) / 2;
+  const markScale = 30 / LOGO_MARK.viewBox;
+
+  return (
+    <svg
+      viewBox={`${-r} ${-r} ${r * 2} ${r * 2}`}
+      className="absolute"
+      style={{
+        left: u(CX - r),
+        top: u(L.sealCenter - r),
+        width: u(r * 2),
+        height: u(r * 2),
+      }}
+      aria-hidden
+    >
+      <defs>
+        <path
+          id={ringId}
+          d={`M 0 ${-textRadius} A ${textRadius} ${textRadius} 0 1 1 0 ${textRadius} A ${textRadius} ${textRadius} 0 1 1 0 ${-textRadius}`}
+        />
+      </defs>
+      <circle r={r} fill={CERTIFICATE.navy} />
+      <circle r={r - 2.5} fill="none" stroke={CERTIFICATE.mint} strokeOpacity={0.7} strokeWidth={0.5} />
+      <circle r={r - 13} fill="none" stroke={CERTIFICATE.mint} strokeOpacity={0.7} strokeWidth={0.5} />
+      <text
+        transform={`rotate(${startAngle})`}
+        fill="#ffffff"
+        style={{ fontFamily: CERTIFICATE_FONTS.ui, fontWeight: 600, fontSize: 5.4 }}
+      >
+        <textPath
+          href={`#${ringId}`}
+          textLength={2 * Math.PI * textRadius - 1}
+          lengthAdjust="spacing"
+        >
+          {CERTIFICATE_SEAL_TEXT}
+        </textPath>
+      </text>
+      <g
+        transform={`translate(${0.5 - LOGO_MARK.center.x * markScale} ${-LOGO_MARK.center.y * markScale}) scale(${markScale})`}
+      >
+        <LogoMarkShapes navy="#ffffff" teal={CERTIFICATE.mint} edge={CERTIFICATE.mint} />
+      </g>
+    </svg>
+  );
+}

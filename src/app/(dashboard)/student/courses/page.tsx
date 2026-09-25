@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
@@ -112,7 +113,7 @@ export default async function StudentCoursesPage() {
           </p>
           <Link
             href="/courses"
-            className="mt-4 inline-flex rounded-xl bg-[#083f9b] px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-purple"
+            className="mt-4 inline-flex rounded-xl bg-brand-blue px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-purple"
           >
             Explore courses
           </Link>
@@ -132,9 +133,11 @@ export default async function StudentCoursesPage() {
                     href={`/student/courses/${course.slug}`}
                     className="flex min-w-0 flex-1 items-center gap-3 transition hover:opacity-90"
                   >
-                    <img
+                    <Image
                       src={course.image}
                       alt=""
+                      width={56}
+                      height={56}
                       className="size-12 shrink-0 rounded-lg object-cover sm:size-14"
                     />
                     <div className="min-w-0 flex-1">
@@ -166,7 +169,7 @@ export default async function StudentCoursesPage() {
                           ? `/student/courses/${course.slug}/lessons/${course.nextLesson.id}`
                           : `/student/courses/${course.slug}`
                       }
-                      className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-[#083f9b] px-3 text-sm font-semibold text-white transition hover:bg-brand-purple"
+                      className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-brand-blue px-3 text-sm font-semibold text-white transition hover:bg-brand-purple"
                     >
                       <Play className="size-3.5 fill-current" />
                       Continue

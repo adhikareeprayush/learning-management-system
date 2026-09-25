@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import {
   Award,
@@ -12,6 +13,28 @@ import { getServerSession } from "@/lib/auth";
 import { formatLevel, listPublishedRoadmaps } from "@/lib/roadmaps";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 import { notFound } from "next/navigation";
+
+const NUMBER_WORDS = [
+  "Zero",
+  "One",
+  "Two",
+  "Three",
+  "Four",
+  "Five",
+  "Six",
+  "Seven",
+  "Eight",
+  "Nine",
+  "Ten",
+  "Eleven",
+  "Twelve",
+];
+
+function pathCountHeadline(count: number) {
+  if (count === 0) return "Paths coming soon.";
+  const word = NUMBER_WORDS[count] ?? count.toLocaleString();
+  return `${word} path${count === 1 ? "" : "s"}.`;
+}
 
 export default async function RoadmapsPage() {
   const tenant = await resolveTenantFromHeaders();
@@ -35,7 +58,7 @@ export default async function RoadmapsPage() {
             Learning paths
           </p>
           <h1 className="mt-3 max-w-3xl font-display text-[1.85rem] leading-[1.15] sm:mt-4 sm:text-4xl md:text-5xl lg:text-[56px] lg:leading-tight">
-            Five paths.{" "}
+            {pathCountHeadline(roadmaps.length)}{" "}
             <span className="text-brand-mint">Real course order.</span>
           </h1>
           <p className="mt-3 max-w-xl text-base leading-relaxed text-white/80 sm:mt-4 sm:text-lg">
@@ -73,10 +96,12 @@ export default async function RoadmapsPage() {
                 className="group flex flex-col overflow-hidden rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition hover:border-brand-purple/25 hover:shadow-md"
               >
                 <div className="relative aspect-[16/9] overflow-hidden bg-surface">
-                  <img
+                  <Image
                     src={roadmap.thumbnail}
                     alt=""
-                    className="size-full object-cover transition duration-300 group-hover:scale-[1.03]"
+                    fill
+                    sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                    className="object-cover transition duration-300 group-hover:scale-[1.03]"
                   />
                   {roadmap.featured ? (
                     <span className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-md bg-brand-navy/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-brand-mint">

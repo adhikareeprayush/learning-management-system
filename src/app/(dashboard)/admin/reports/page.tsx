@@ -1,12 +1,11 @@
 import { redirect } from "next/navigation";
 import { AdminReportsView } from "@/components/dashboard/admin-reports-view";
-import { getServerSession } from "@/lib/auth";
 import { getAdminReportsData } from "@/lib/dashboard-data";
+import { requireAdminPage } from "@/lib/page-guards";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 
 export default async function AdminReportsPage() {
-  const session = await getServerSession();
-  if (!session) redirect("/login");
+  await requireAdminPage();
 
   const ctx = await resolveTenantFromHeaders();
   if (!ctx) redirect("/login");

@@ -80,27 +80,39 @@ export function studentRoadmapPath(slug: string) {
   return `/student/roadmaps/${slug}`;
 }
 
-export async function enrollInRoadmap(roadmapId: string): Promise<{
+export type RoadmapCourseEnrollSummary = {
+  courseId: string;
+  slug: string;
+  title: string;
+  status: "enrolled" | "already_enrolled" | "payment_required" | "failed";
+  error?: string;
+};
+
+export type EnrollRoadmapClientResult = {
   ok: boolean;
   roadmapSlug?: string;
   roleChanged?: boolean;
   alreadyEnrolled?: boolean;
   coursesEnrolled?: number;
+  enrolledCount?: number;
+  paymentRequiredCount?: number;
+  courses?: RoadmapCourseEnrollSummary[];
   error?: string;
   status: number;
-}> {
+};
+
+export async function enrollInRoadmap(
+  roadmapId: string,
+): Promise<EnrollRoadmapClientResult> {
   const res = await fetch("/api/roadmaps/enroll", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ roadmapId }),
   });
-  const data = (await res.json().catch(() => ({}))) as {
-    roadmapSlug?: string;
-    roleChanged?: boolean;
-    alreadyEnrolled?: boolean;
-    coursesEnrolled?: number;
-    error?: string;
-  };
+  const data = (await res.json().catch(() => ({}))) as Omit<
+    EnrollRoadmapClientResult,
+    "ok" | "status"
+  >;
 
   if (res.status === 401) {
     return { ok: false, status: 401, error: data.error ?? "Unauthorized" };
@@ -121,7 +133,37 @@ export async function enrollInRoadmap(roadmapId: string): Promise<{
     roleChanged: data.roleChanged,
     alreadyEnrolled: data.alreadyEnrolled,
     coursesEnrolled: data.coursesEnrolled,
+    enrolledCount: data.enrolledCount,
+    paymentRequiredCount: data.paymentRequiredCount,
+    courses: data.courses,
   };
+}
+
+/** Human summary of a roadmap enrollment for flash messages. */
+export function roadmapEnrollMessage(result: EnrollRoadmapClientResult) {
+  const newly = result.coursesEnrolled ?? 0;
+  const paid = result.paymentRequiredCount ?? 0;
+  const parts: string[] = [];
+  if (result.alreadyEnrolled && newly === 0) {
+    parts.push("You're already on this roadmap");
+  } else {
+    parts.push(
+      newly > 0
+        ? `Enrolled in ${newly} course${newly === 1 ? "" : "s"}`
+        : "Roadmap started",
+    );
+  }
+  if (paid > 0) {
+    parts.push(
+      `${paid} paid course${paid === 1 ? " needs" : "s need"} to be purchased`,
+    );
+  }
+  return `${parts.join(" · ")} — opening roadmap…`;
+}
+
+/** Public course page with the payment modal opened on arrival. */
+export function coursePurchasePath(slugOrId: string) {
+  return `/courses/${encodeURIComponent(slugOrId)}?pay=1`;
 }
 
 export function registerWithEnrollPath(courseId: string, slug: string) {

@@ -1,11 +1,13 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowRight,
   CalendarClock,
   CheckCircle2,
   Flame,
+  Receipt,
 } from "lucide-react";
 import {
   ApexChart,
@@ -17,8 +19,104 @@ import { ProgressBar } from "@/components/dashboard/progress-bar";
 import { StatsCard } from "@/components/dashboard/stats-card";
 import { useLiveData } from "@/hooks/use-live-data";
 import type { getStudentDashboardData } from "@/lib/dashboard-data";
+import { coursePurchasePath } from "@/lib/enroll-client";
+import type { StudentPaymentSummary } from "@/lib/payments";
+import { formatNprFromPaisa } from "@/lib/pricing";
 
 type DashboardData = Awaited<ReturnType<typeof getStudentDashboardData>>;
+
+const paymentStatusMeta: Record<
+  StudentPaymentSummary["status"],
+  { label: string; className: string }
+> = {
+  PENDING: { label: "Under review", className: "bg-amber-50 text-amber-800" },
+  COMPLETED: { label: "Approved", className: "bg-emerald-50 text-emerald-700" },
+  FAILED: { label: "Rejected", className: "bg-red-50 text-red-700" },
+  CANCELED: { label: "Canceled", className: "bg-surface text-muted" },
+  EXPIRED: { label: "Expired", className: "bg-surface text-muted" },
+};
+
+const paymentDateFormatter = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+function PaymentsCard({ payments }: { payments: StudentPaymentSummary[] }) {
+  const seenCourses = new Set<string>();
+  const rows = payments.map((payment) => {
+    // Only the newest payment per course can be resubmitted.
+    const isLatestForCourse = !seenCourses.has(payment.course.id);
+    seenCourses.add(payment.course.id);
+    return {
+      payment,
+      canResubmit:
+        isLatestForCourse && payment.status === "FAILED" && !payment.enrolled,
+    };
+  });
+
+  return (
+    <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <Receipt className="size-4 text-brand-purple" />
+        <h2 className="text-base font-semibold text-brand-navy sm:text-lg">
+          Payments
+        </h2>
+      </div>
+      <ul className="divide-y divide-black/5">
+        {rows.map(({ payment, canResubmit }) => {
+          const meta = paymentStatusMeta[payment.status];
+          return (
+            <li
+              key={payment.id}
+              className="flex flex-col gap-2 py-3 first:pt-0 last:pb-0 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
+            >
+              <div className="min-w-0">
+                <Link
+                  href={
+                    payment.enrolled
+                      ? `/student/courses/${payment.course.slug}`
+                      : `/courses/${payment.course.slug}`
+                  }
+                  className="block truncate text-sm font-semibold text-[#324361] transition hover:text-brand-purple"
+                >
+                  {payment.course.title}
+                </Link>
+                <p className="mt-0.5 text-xs text-muted">
+                  {formatNprFromPaisa(payment.amount)} · Submitted{" "}
+                  {paymentDateFormatter.format(new Date(payment.createdAt))}
+                </p>
+                {payment.status === "FAILED" ? (
+                  <p className="mt-1 text-xs text-red-700">
+                    Reason:{" "}
+                    {payment.rejectionReason?.trim() ||
+                      "The payment could not be verified."}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span
+                  className={`rounded-md px-2 py-0.5 text-xs font-semibold ${meta.className}`}
+                >
+                  {meta.label}
+                </span>
+                {canResubmit ? (
+                  <Link
+                    href={coursePurchasePath(payment.course.slug)}
+                    className="text-xs font-semibold text-brand-purple transition hover:text-brand-teal"
+                  >
+                    Resubmit
+                  </Link>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
 
 function averageProgress(values: number[]) {
   if (values.length === 0) return 0;
@@ -34,9 +132,11 @@ const priorityStyles = {
 export function StudentDashboardView({
   userName,
   initialData,
+  payments = [],
 }: {
   userName: string;
   initialData: DashboardData;
+  payments?: StudentPaymentSummary[];
 }) {
   const { data, refreshedAt, refreshing } = useLiveData(
     "/api/student/dashboard",
@@ -77,6 +177,8 @@ export function StudentDashboardView({
           />
         ))}
       </div>
+
+      {payments.length > 0 ? <PaymentsCard payments={payments} /> : null}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:gap-5">
         <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
@@ -300,9 +402,11 @@ export function StudentDashboardView({
                   href={`/student/courses/${course.slug}`}
                   className="flex gap-3 rounded-xl border border-black/5 p-3 transition hover:bg-surface/70 sm:gap-4 sm:p-3.5"
                 >
-                  <img
+                  <Image
                     src={course.image}
                     alt=""
+                    width={64}
+                    height={64}
                     className="size-14 shrink-0 rounded-lg object-cover sm:size-16"
                   />
                   <div className="min-w-0 flex-1">

@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { FlashBanner } from "@/components/ui/flash-banner";
 import { authClient } from "@/lib/auth-client";
 import {
+  coursePurchasePath,
   enrollInCourse,
   enrollInRoadmap,
+  roadmapEnrollMessage,
   studentCoursePath,
   studentRoadmapPath,
 } from "@/lib/enroll-client";
@@ -19,14 +21,34 @@ function dashboardForRole(role: string | undefined | null) {
   return "/student";
 }
 
+/**
+ * Only same-origin paths. "//host" and "/\host" are protocol-relative, and
+ * browsers strip tabs/newlines, so "/<tab>/host" would become "//host" too.
+ */
+function safeNextPath(next: string | null) {
+  if (!next || !next.startsWith("/")) return null;
+  if (next.startsWith("//") || next.startsWith("/\\")) return null;
+  for (const char of next) {
+    const code = char.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) return null;
+  }
+  try {
+    const url = new URL(next, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
+}
+
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const enrollCourseId = searchParams.get("enroll");
   const roadmapId = searchParams.get("roadmap");
-  const next = searchParams.get("next");
-  const [email, setEmail] = useState("alice@example.com");
-  const [password, setPassword] = useState("password123");
+  const courseSlug = searchParams.get("slug");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -57,7 +79,7 @@ export function LoginForm() {
     if (roadmapId) {
       const result = await enrollInRoadmap(roadmapId);
       if (result.ok && result.roadmapSlug) {
-        setFlash("Signed in — opening your roadmap…");
+        setFlash(roadmapEnrollMessage(result));
         window.location.assign(studentRoadmapPath(result.roadmapSlug));
         return;
       }
@@ -70,10 +92,16 @@ export function LoginForm() {
         window.location.assign(studentCoursePath(enrollResult.courseSlug));
         return;
       }
+      if (enrollResult.paymentRequired) {
+        setFlash("Signed in — opening checkout…");
+        window.location.assign(coursePurchasePath(courseSlug || enrollCourseId));
+        return;
+      }
     }
 
     setFlash("Signed in — redirecting…");
-    if (next && next.startsWith("/")) {
+    const next = safeNextPath(searchParams.get("next"));
+    if (next) {
       router.push(next);
     } else {
       router.push(dashboardForRole(role));
@@ -112,9 +140,9 @@ export function LoginForm() {
       </label>
       <p className="text-xs text-muted">
         Demo: alice@example.com / password123 (also instructor@example.com,
-        admin@edujarr.com)
+        admin@convolutionlabs.com)
       </p>
-      <Button submit className="w-full" disabled={loading}>
+      <Button submit className="w-full" loading={loading}>
         {loading ? "Signing in…" : "Continue to dashboard"}
       </Button>
       {error ? <p className="text-center text-sm text-red-500">{error}</p> : null}
@@ -123,9 +151,9 @@ export function LoginForm() {
         <Link
           href={
             roadmapId
-              ? `/register?roadmap=${encodeURIComponent(roadmapId)}${searchParams.get("slug") ? `&slug=${encodeURIComponent(searchParams.get("slug")!)}` : ""}`
+              ? `/register?roadmap=${encodeURIComponent(roadmapId)}${courseSlug ? `&slug=${encodeURIComponent(courseSlug)}` : ""}`
               : enrollCourseId
-                ? `/register?enroll=${encodeURIComponent(enrollCourseId)}${searchParams.get("slug") ? `&slug=${encodeURIComponent(searchParams.get("slug")!)}` : ""}`
+                ? `/register?enroll=${encodeURIComponent(enrollCourseId)}${courseSlug ? `&slug=${encodeURIComponent(courseSlug)}` : ""}`
                 : "/register"
           }
           className="font-semibold text-brand-purple"

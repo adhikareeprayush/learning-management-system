@@ -77,7 +77,7 @@ export async function seedCourseWithModules(
   });
 
   for (const mod of data.modules) {
-    const module = await prisma.module.upsert({
+    const courseModule = await prisma.module.upsert({
       where: { courseId_order: { courseId: course.id, order: mod.order } },
       update: { title: mod.title, description: mod.description },
       create: {
@@ -98,11 +98,11 @@ export async function seedCourseWithModules(
           duration: lesson.duration,
           isFree: lesson.isFree ?? false,
           videoUrl: lesson.videoUrl,
-          moduleId: module.id,
+          moduleId: courseModule.id,
         },
         create: {
           courseId: course.id,
-          moduleId: module.id,
+          moduleId: courseModule.id,
           title: lesson.title,
           content: lesson.content,
           summary: lesson.summary,

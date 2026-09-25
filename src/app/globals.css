@@ -6,11 +6,18 @@
 @import "@fontsource/rowdies/300.css";
 @import "@fontsource/rowdies/400.css";
 @import "@fontsource/rowdies/700.css";
+@import "@fontsource/sora/400.css";
+@import "@fontsource/sora/500.css";
+@import "@fontsource/sora/600.css";
+@import "@fontsource/sora/700.css";
+@import "@fontsource/sora/800.css";
+@import "@fontsource/cormorant-garamond/600.css";
+@import "@fontsource/cormorant-garamond/500-italic.css";
 
 :root {
   --font-saira: "Saira", system-ui, sans-serif;
   --font-rowdies: "Rowdies", system-ui, sans-serif;
-  --font-revalia: "Revalia", "Rowdies", system-ui, sans-serif;
+  --font-sora: "Sora", system-ui, sans-serif;
   --background: #ffffff;
   --foreground: #1b2336;
   --brand-navy: #04016c;
@@ -40,7 +47,7 @@
   --color-footer: var(--footer);
   --font-sans: var(--font-saira);
   --font-display: var(--font-rowdies);
-  --font-brand: var(--font-revalia);
+  --font-brand: var(--font-sora);
 }
 
 body {

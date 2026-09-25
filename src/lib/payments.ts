@@ -1,8 +1,47 @@
 import type { PaymentStatus } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { enrollUserInCourse } from "@/lib/enrollments";
+import { getImagekitEndpoint } from "@/lib/imagekit-url";
 import { getPaymentMethodById } from "@/lib/payment-methods";
 import { coursePaymentAmountPaisa, courseRequiresPayment } from "@/lib/pricing";
+
+function parseUrl(value: string, base?: string) {
+  try {
+    return new URL(value, base);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Payment proof must be a file this app uploaded: the configured ImageKit
+ * endpoint, or (dev) this app's own /uploads/ directory. Anything else could
+ * point admins at an arbitrary third-party URL.
+ */
+export function isTrustedPaymentScreenshotUrl(value: string, requestOrigin?: string) {
+  const url = parseUrl(value, requestOrigin ?? "http://localhost");
+  if (!url || (url.protocol !== "https:" && url.protocol !== "http:")) return false;
+  if (url.username || url.password) return false;
+
+  const endpoint = getImagekitEndpoint();
+  const imagekit = endpoint ? parseUrl(`${endpoint}/`) : null;
+  if (
+    imagekit &&
+    url.origin === imagekit.origin &&
+    url.pathname.startsWith(imagekit.pathname)
+  ) {
+    return true;
+  }
+
+  const appOrigins = [
+    requestOrigin,
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.BETTER_AUTH_URL,
+  ]
+    .map((origin) => (origin?.trim() ? parseUrl(origin.trim())?.origin : null))
+    .filter((origin): origin is string => Boolean(origin));
+
+  return appOrigins.includes(url.origin) && url.pathname.startsWith("/uploads/");
+}
 
 export async function getCompletedPaymentForCourse(userId: string, courseId: string) {
   return prisma.payment.findFirst({
@@ -63,41 +102,47 @@ export async function submitCoursePayment(input: {
     };
   }
 
-  const pendingPayment = await prisma.payment.findFirst({
-    where: { userId: input.userId, courseId: course.id, status: "PENDING" },
+  const method = await getPaymentMethodById(input.paymentMethodId, input.organizationId);
+  if (!method || !method.enabled) {
+    return { ok: false as const, error: "Payment method not available", status: 400 };
+  }
+
+  // Serialize submissions per user+course so two quick submits can't both pass
+  // the "no pending payment" check (there is no unique constraint to lean on).
+  const payment = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`payment:${input.userId}:${course.id}`}))`;
+
+    const pendingPayment = await tx.payment.findFirst({
+      where: { userId: input.userId, courseId: course.id, status: "PENDING" },
+      select: { id: true },
+    });
+    if (pendingPayment) return null;
+
+    return tx.payment.create({
+      data: {
+        userId: input.userId,
+        courseId: course.id,
+        paymentMethodId: method.id,
+        methodType: method.type,
+        purchaseOrderId: `course-${course.id}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+        amount,
+        status: "PENDING",
+        screenshotUrl: input.screenshotUrl,
+        referenceNote: input.referenceNote ?? null,
+      },
+      include: {
+        paymentMethod: { select: { id: true, label: true, type: true } },
+      },
+    });
   });
 
-  if (pendingPayment) {
+  if (!payment) {
     return {
       ok: false as const,
       error: "You already have a payment under review for this course",
       status: 409,
     };
   }
-
-  const method = await getPaymentMethodById(input.paymentMethodId, input.organizationId);
-  if (!method || !method.enabled) {
-    return { ok: false as const, error: "Payment method not available", status: 400 };
-  }
-
-  const purchaseOrderId = `course-${course.id}-${Date.now()}`;
-
-  const payment = await prisma.payment.create({
-    data: {
-      userId: input.userId,
-      courseId: course.id,
-      paymentMethodId: method.id,
-      methodType: method.type,
-      purchaseOrderId,
-      amount,
-      status: "PENDING",
-      screenshotUrl: input.screenshotUrl,
-      referenceNote: input.referenceNote ?? null,
-    },
-    include: {
-      paymentMethod: { select: { id: true, label: true, type: true } },
-    },
-  });
 
   return {
     ok: true as const,
@@ -110,110 +155,57 @@ export async function submitCoursePayment(input: {
   };
 }
 
-export async function reviewCoursePayment(input: {
-  organizationId: string;
-  adminId: string;
-  paymentId: string;
-  action: "approve" | "reject";
-  rejectionReason?: string | null;
-}) {
-  const payment = await prisma.payment.findUnique({
-    where: { id: input.paymentId },
-    include: {
-      course: { select: { id: true, slug: true, title: true, organizationId: true } },
-      user: { select: { id: true, name: true, email: true } },
-    },
-  });
+export type StudentPaymentSummary = {
+  id: string;
+  amount: number;
+  status: PaymentStatus;
+  rejectionReason: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  course: { id: string; title: string; slug: string };
+  enrolled: boolean;
+};
 
-  if (!payment || payment.course.organizationId !== input.organizationId) {
-    return { ok: false as const, error: "Payment not found", status: 404 };
-  }
-
-  if (payment.status !== "PENDING") {
-    return {
-      ok: false as const,
-      error: "Only pending payments can be reviewed",
-      status: 409,
-    };
-  }
-
-  if (input.action === "reject") {
-    const reason = input.rejectionReason?.trim() || "Payment could not be verified";
-    const updated = await prisma.payment.update({
-      where: { id: payment.id },
-      data: {
-        status: "FAILED",
-        rejectionReason: reason,
-        reviewedById: input.adminId,
-        reviewedAt: new Date(),
-      },
-    });
-
-    return {
-      ok: true as const,
-      payment: updated,
-      enrolled: false,
-    };
-  }
-
-  const updated = await prisma.payment.update({
-    where: { id: payment.id },
-    data: {
-      status: "COMPLETED",
-      reviewedById: input.adminId,
-      reviewedAt: new Date(),
-      completedAt: new Date(),
-      rejectionReason: null,
-    },
-  });
-
-  const member = await prisma.organizationMember.findUnique({
-    where: {
-      organizationId_userId: {
-        organizationId: input.organizationId,
-        userId: payment.userId,
-      },
-    },
-    select: { role: true },
-  });
-
-  const enrollResult = await enrollUserInCourse(
-    payment.userId,
-    member?.role ?? "STUDENT",
-    payment.courseId,
-    input.organizationId,
-  );
-
-  if (!enrollResult.ok && enrollResult.status !== 409) {
-    await prisma.payment.update({
-      where: { id: payment.id },
-      data: { status: "PENDING", completedAt: null, reviewedAt: null, reviewedById: null },
-    });
-    return { ok: false as const, error: enrollResult.error, status: enrollResult.status };
-  }
-
-  return {
-    ok: true as const,
-    payment: updated,
-    enrolled: true,
-    courseSlug: enrollResult.ok ? enrollResult.courseSlug : payment.course.slug,
-    student: payment.user,
-    course: payment.course,
-  };
-}
-
-export async function listPaymentsForAdmin(organizationId: string, status?: PaymentStatus) {
-  return prisma.payment.findMany({
-    where: {
-      course: { organizationId },
-      ...(status ? { status } : {}),
-    },
+/** Recent course payments for the student dashboard (newest first). */
+export async function listPaymentsForStudent(
+  userId: string,
+  organizationId: string,
+  take = 5,
+): Promise<StudentPaymentSummary[]> {
+  const payments = await prisma.payment.findMany({
+    where: { userId, course: { organizationId } },
     orderBy: { createdAt: "desc" },
-    include: {
-      user: { select: { id: true, name: true, email: true } },
-      course: { select: { id: true, title: true, slug: true } },
-      paymentMethod: { select: { id: true, label: true, type: true } },
-      reviewedBy: { select: { id: true, name: true } },
+    take,
+    select: {
+      id: true,
+      amount: true,
+      status: true,
+      rejectionReason: true,
+      createdAt: true,
+      reviewedAt: true,
+      course: {
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          enrollments: { where: { studentId: userId }, select: { id: true } },
+        },
+      },
     },
   });
+
+  return payments.map((payment) => ({
+    id: payment.id,
+    amount: payment.amount,
+    status: payment.status,
+    rejectionReason: payment.rejectionReason,
+    createdAt: payment.createdAt.toISOString(),
+    reviewedAt: payment.reviewedAt?.toISOString() ?? null,
+    course: {
+      id: payment.course.id,
+      title: payment.course.title,
+      slug: payment.course.slug,
+    },
+    enrolled: payment.course.enrollments.length > 0,
+  }));
 }

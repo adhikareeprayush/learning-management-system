@@ -12,13 +12,20 @@ export function useLiveData<T>(
   initialData: T,
   { intervalMs = 30_000, enabled = true }: LiveDataOptions = {},
 ) {
-  const [data, setData] = useState<T>(initialData);
+  // Polled data is only valid for the url + server data it was fetched against;
+  // when either changes (new period, router.refresh) we fall back to initialData.
+  const [fetched, setFetched] = useState<{
+    url: string;
+    base: T;
+    data: T;
+  } | null>(null);
   const [refreshedAt, setRefreshedAt] = useState(() => new Date());
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    setData(initialData);
-  }, [initialData, url]);
+  const data =
+    fetched && fetched.url === url && fetched.base === initialData
+      ? fetched.data
+      : initialData;
 
   const refresh = useCallback(async () => {
     if (!enabled) return;
@@ -31,14 +38,14 @@ export function useLiveData<T>(
         refreshedAt?: string;
       };
       const next = json.data ?? (json as T);
-      setData(next);
+      setFetched({ url, base: initialData, data: next });
       setRefreshedAt(
         json.refreshedAt ? new Date(json.refreshedAt) : new Date(),
       );
     } finally {
       setRefreshing(false);
     }
-  }, [url, enabled]);
+  }, [url, enabled, initialData]);
 
   useEffect(() => {
     if (!enabled) return;

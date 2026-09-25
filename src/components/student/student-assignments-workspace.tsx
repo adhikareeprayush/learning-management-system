@@ -87,6 +87,56 @@ function assignmentStatus(
   return "Upcoming";
 }
 
+function isGraded(assignment: StudentAssignmentItem) {
+  return assignment.submission?.status === "GRADED";
+}
+
+function submissionActionLabel(assignment: StudentAssignmentItem) {
+  if (isGraded(assignment)) return "View feedback";
+  return assignment.submission ? "View / resubmit" : "Submit";
+}
+
+function GradeSummary({ submission }: { submission: StudentSubmission }) {
+  return (
+    <div className="rounded-xl border border-violet-100 bg-violet-50/70 px-4 py-3">
+      <p className="text-sm font-semibold text-violet-800">
+        Grade: {submission.grade ?? "Not scored"}
+        {submission.grade !== null ? "%" : ""}
+      </p>
+      {submission.feedback ? (
+        <p className="mt-1 whitespace-pre-wrap text-sm text-violet-900/75">
+          {submission.feedback}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function SubmittedWork({ submission }: { submission: StudentSubmission }) {
+  return (
+    <div className="space-y-2 rounded-xl border border-black/5 bg-white px-3 py-3 text-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+        Your submission
+      </p>
+      {submission.content ? (
+        <p className="whitespace-pre-wrap text-[#324361]">{submission.content}</p>
+      ) : null}
+      {isHttpUrl(submission.fileUrl) ? (
+        <a
+          href={submission.fileUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex max-w-full items-center gap-1.5 text-xs font-semibold text-brand-purple hover:text-brand-teal"
+        >
+          <Paperclip className="size-3.5 shrink-0" />
+          <span className="truncate">{fileNameFromUrl(submission.fileUrl)}</span>
+          <ExternalLink className="size-3 shrink-0" />
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 function formatDate(value: string | null) {
   if (!value) return "No deadline";
   const date = new Date(value);
@@ -182,6 +232,7 @@ export function StudentAssignmentsWorkspace({
         const form = new FormData();
         form.set("file", file);
         form.set("provider", "imagekit");
+        form.set("purpose", "submission");
 
         const uploadResponse = await fetch("/api/upload", {
           method: "POST",
@@ -319,11 +370,7 @@ export function StudentAssignmentsWorkspace({
                       aria-expanded={isEditing}
                       className="rounded-lg border border-black/8 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      {isEditing
-                        ? "Close"
-                        : assignment.submission
-                          ? "View / resubmit"
-                          : "Submit"}
+                      {isEditing ? "Close" : submissionActionLabel(assignment)}
                     </button>
                   </div>
                 </article>
@@ -337,6 +384,20 @@ export function StudentAssignmentsWorkspace({
                 const assignment = assignments.find((item) => item.id === editingId);
                 if (!assignment) return null;
                 const isBusy = busyId === assignment.id;
+                if (assignment.submission && isGraded(assignment)) {
+                  return (
+                    <div className="space-y-4">
+                      <h2 className="font-semibold text-brand-navy">
+                        Graded submission
+                      </h2>
+                      <GradeSummary submission={assignment.submission} />
+                      <SubmittedWork submission={assignment.submission} />
+                      <p className="text-xs text-muted">
+                        Graded work can&apos;t be resubmitted.
+                      </p>
+                    </div>
+                  );
+                }
                 return (
                   <form
                     onSubmit={(event) => submitAssignment(event, assignment)}
@@ -385,7 +446,7 @@ export function StudentAssignmentsWorkspace({
                       <button
                         type="submit"
                         disabled={isBusy}
-                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#083f9b] px-4 text-sm font-semibold text-white transition hover:bg-brand-purple disabled:cursor-not-allowed disabled:opacity-60"
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white transition hover:bg-brand-purple disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {isBusy ? (
                           <Loader2 className="size-4 animate-spin" />
@@ -471,9 +532,7 @@ export function StudentAssignmentsWorkspace({
                             >
                               {isEditing
                                 ? "Close"
-                                : assignment.submission
-                                  ? "View / resubmit"
-                                  : "Submit"}
+                                : submissionActionLabel(assignment)}
                             </button>
                           </div>
                         </td>
@@ -521,149 +580,144 @@ export function StudentAssignmentsWorkspace({
                                 </div>
                               ) : null}
 
-                              {assignment.submission?.status === "GRADED" ? (
-                                <div className="rounded-xl border border-violet-100 bg-violet-50/70 px-4 py-3">
-                                  <p className="text-sm font-semibold text-violet-800">
-                                    Grade:{" "}
-                                    {assignment.submission.grade ?? "Not scored"}
-                                    {assignment.submission.grade !== null
-                                      ? "%"
-                                      : ""}
+                              {assignment.submission && isGraded(assignment) ? (
+                                <>
+                                  <GradeSummary submission={assignment.submission} />
+                                  <SubmittedWork submission={assignment.submission} />
+                                  <p className="text-xs text-muted">
+                                    Graded work can&apos;t be resubmitted.
                                   </p>
-                                  {assignment.submission.feedback ? (
-                                    <p className="mt-1 whitespace-pre-wrap text-sm text-violet-900/75">
-                                      {assignment.submission.feedback}
-                                    </p>
-                                  ) : null}
-                                </div>
-                              ) : null}
-
-                              <label className="block">
-                                <span className="text-sm font-semibold text-brand-navy">
-                                  Written response
-                                </span>
-                                <textarea
-                                  value={content}
-                                  onChange={(event) => setContent(event.target.value)}
-                                  rows={6}
-                                  maxLength={50_000}
-                                  disabled={isBusy}
-                                  placeholder="Write your response, notes, or a link for your instructor…"
-                                  className="mt-2 w-full resize-y rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm text-brand-navy outline-none transition placeholder:text-muted/70 focus:border-brand-purple/40 focus:ring-2 focus:ring-brand-purple/10 disabled:opacity-60"
-                                />
-                              </label>
-
-                              <div>
-                                <p className="text-sm font-semibold text-brand-navy">
-                                  Attachment
-                                </p>
-                                <div className="mt-2 flex flex-wrap items-center gap-2">
-                                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-brand-navy transition hover:bg-surface">
-                                    <FileUp className="size-4 text-brand-purple" />
-                                    {file || fileUrl
-                                      ? "Replace file"
-                                      : "Choose file"}
-                                    <input
-                                      key={`${assignment.id}-${file?.name ?? "empty"}-${file?.lastModified ?? 0}`}
-                                      type="file"
-                                      accept={acceptedFiles}
+                                </>
+                              ) : (
+                                <>
+                                  <label className="block">
+                                    <span className="text-sm font-semibold text-brand-navy">
+                                      Written response
+                                    </span>
+                                    <textarea
+                                      value={content}
+                                      onChange={(event) => setContent(event.target.value)}
+                                      rows={6}
+                                      maxLength={50_000}
                                       disabled={isBusy}
-                                      className="sr-only"
-                                      onChange={(event) => {
-                                        const selectedFile =
-                                          event.target.files?.[0] ?? null;
-                                        setFile(selectedFile);
-                                        setError(null);
-                                      }}
+                                      placeholder="Write your response, notes, or a link for your instructor…"
+                                      className="mt-2 w-full resize-y rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm text-brand-navy outline-none transition placeholder:text-muted/70 focus:border-brand-purple/40 focus:ring-2 focus:ring-brand-purple/10 disabled:opacity-60"
                                     />
                                   </label>
 
-                                  {file ? (
-                                    <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 text-xs text-muted">
-                                      <Paperclip className="size-3.5 shrink-0" />
-                                      <span className="max-w-56 truncate">
-                                        {file.name}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        onClick={removeFile}
-                                        disabled={isBusy}
-                                        className="ml-1 rounded text-muted transition hover:text-red-600"
-                                        aria-label={`Remove ${file.name}`}
-                                      >
-                                        <X className="size-3.5" />
-                                      </button>
-                                    </span>
-                                  ) : isHttpUrl(fileUrl) ? (
-                                    <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 text-xs text-muted">
-                                      <Paperclip className="size-3.5 shrink-0" />
-                                      <a
-                                        href={fileUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="inline-flex max-w-56 items-center gap-1 truncate font-semibold text-brand-purple hover:text-brand-teal"
-                                      >
-                                        <span className="truncate">
-                                          {fileNameFromUrl(fileUrl)}
+                                  <div>
+                                    <p className="text-sm font-semibold text-brand-navy">
+                                      Attachment
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-brand-navy transition hover:bg-surface">
+                                        <FileUp className="size-4 text-brand-purple" />
+                                        {file || fileUrl
+                                          ? "Replace file"
+                                          : "Choose file"}
+                                        <input
+                                          key={`${assignment.id}-${file?.name ?? "empty"}-${file?.lastModified ?? 0}`}
+                                          type="file"
+                                          accept={acceptedFiles}
+                                          disabled={isBusy}
+                                          className="sr-only"
+                                          onChange={(event) => {
+                                            const selectedFile =
+                                              event.target.files?.[0] ?? null;
+                                            setFile(selectedFile);
+                                            setError(null);
+                                          }}
+                                        />
+                                      </label>
+
+                                      {file ? (
+                                        <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 text-xs text-muted">
+                                          <Paperclip className="size-3.5 shrink-0" />
+                                          <span className="max-w-56 truncate">
+                                            {file.name}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={removeFile}
+                                            disabled={isBusy}
+                                            className="ml-1 rounded text-muted transition hover:text-red-600"
+                                            aria-label={`Remove ${file.name}`}
+                                          >
+                                            <X className="size-3.5" />
+                                          </button>
                                         </span>
-                                        <ExternalLink className="size-3 shrink-0" />
-                                      </a>
-                                      <button
-                                        type="button"
-                                        onClick={removeFile}
-                                        disabled={isBusy}
-                                        className="ml-1 rounded text-muted transition hover:text-red-600"
-                                        aria-label="Remove uploaded file"
-                                      >
-                                        <X className="size-3.5" />
-                                      </button>
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <p className="mt-1.5 text-xs text-muted">
-                                  PDF, text, ZIP, or image. Files upload securely
-                                  when you submit.
-                                </p>
-                              </div>
+                                      ) : isHttpUrl(fileUrl) ? (
+                                        <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 text-xs text-muted">
+                                          <Paperclip className="size-3.5 shrink-0" />
+                                          <a
+                                            href={fileUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="inline-flex max-w-56 items-center gap-1 truncate font-semibold text-brand-purple hover:text-brand-teal"
+                                          >
+                                            <span className="truncate">
+                                              {fileNameFromUrl(fileUrl)}
+                                            </span>
+                                            <ExternalLink className="size-3 shrink-0" />
+                                          </a>
+                                          <button
+                                            type="button"
+                                            onClick={removeFile}
+                                            disabled={isBusy}
+                                            className="ml-1 rounded text-muted transition hover:text-red-600"
+                                            aria-label="Remove uploaded file"
+                                          >
+                                            <X className="size-3.5" />
+                                          </button>
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    <p className="mt-1.5 text-xs text-muted">
+                                      PDF, text, ZIP, or image. Files upload securely
+                                      when you submit.
+                                    </p>
+                                  </div>
 
-                              {error ? (
-                                <p
-                                  role="alert"
-                                  className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700"
-                                >
-                                  {error}
-                                </p>
-                              ) : null}
-
-                              <div className="flex flex-wrap items-center gap-2">
-                                <button
-                                  type="submit"
-                                  disabled={isBusy}
-                                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#083f9b] px-4 text-sm font-semibold text-white transition hover:bg-brand-purple disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                  {isBusy ? (
-                                    <Loader2 className="size-4 animate-spin" />
+                                  {error ? (
+                                    <p
+                                      role="alert"
+                                      className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700"
+                                    >
+                                      {error}
+                                    </p>
                                   ) : null}
-                                  {isBusy
-                                    ? file
-                                      ? "Uploading and saving…"
-                                      : "Saving…"
-                                    : assignment.submission
-                                      ? "Update submission"
-                                      : "Submit assignment"}
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isBusy}
-                                  onClick={() => {
-                                    setEditingId(null);
-                                    setError(null);
-                                  }}
-                                  className="h-10 rounded-xl px-3 text-sm font-semibold text-muted transition hover:bg-white hover:text-brand-navy disabled:opacity-50"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
+
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <button
+                                      type="submit"
+                                      disabled={isBusy}
+                                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white transition hover:bg-brand-purple disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      {isBusy ? (
+                                        <Loader2 className="size-4 animate-spin" />
+                                      ) : null}
+                                      {isBusy
+                                        ? file
+                                          ? "Uploading and saving…"
+                                          : "Saving…"
+                                        : assignment.submission
+                                          ? "Update submission"
+                                          : "Submit assignment"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={() => {
+                                        setEditingId(null);
+                                        setError(null);
+                                      }}
+                                      className="h-10 rounded-xl px-3 text-sm font-semibold text-muted transition hover:bg-white hover:text-brand-navy disabled:opacity-50"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </>
+                              )}
                             </form>
                           </td>
                         </tr>

@@ -94,7 +94,7 @@ function getPrismaClient() {
 
 /** Lazy proxy so HMR does not keep a stale PrismaClient. */
 export const prisma = new Proxy({} as PrismaClient, {
-  get(_target, prop, _receiver) {
+  get(_target, prop) {
     const client = getPrismaClient();
     const value = Reflect.get(client, prop, client);
     if (typeof value === "function") {

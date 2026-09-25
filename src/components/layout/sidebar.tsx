@@ -10,32 +10,26 @@ import {
   navForRole,
   roleFromPath,
 } from "@/lib/dashboard-nav";
-import {
-  getInitials,
-  useDashboardUser,
-} from "@/components/dashboard/dashboard-user-context";
+import { useDashboardUser } from "@/components/dashboard/dashboard-user-context";
 import { UserAvatar } from "@/components/ui/user-avatar";
-import { profileHref, roleProfiles } from "@/lib/mock-dashboard-chrome";
+import { profileHref } from "@/lib/nav";
+
+function planLabel(role: string | undefined) {
+  if (role === "ADMIN") return "Admin";
+  if (role === "INSTRUCTOR") return "Instructor";
+  return "Student";
+}
 
 export function Sidebar() {
   const pathname = usePathname();
   const role = roleFromPath(pathname);
   const groups = navForRole(role);
   const sessionUser = useDashboardUser();
-  const fallback = roleProfiles[role];
-  const profile = sessionUser
-    ? {
-        name: sessionUser.name,
-        image: sessionUser.image,
-        initials: getInitials(sessionUser.name),
-        plan:
-          sessionUser.role === "ADMIN"
-            ? "Admin"
-            : sessionUser.role === "INSTRUCTOR"
-              ? "Instructor"
-              : "Student",
-      }
-    : { name: fallback.name, image: null, initials: fallback.initials, plan: fallback.plan };
+  const profile = {
+    name: sessionUser?.name || "Account",
+    image: sessionUser?.image ?? null,
+    plan: planLabel(sessionUser?.role),
+  };
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -171,7 +165,7 @@ export function Sidebar() {
                           collapsed ? "lg:justify-center lg:px-0" : ""
                         } ${
                           active
-                            ? "bg-[#083f9b] text-white"
+                            ? "bg-brand-blue text-white"
                             : "text-[#324361] hover:bg-surface hover:text-brand-navy"
                         }`}
                       >

@@ -4,7 +4,7 @@ import { PageHero } from "@/components/layout/page-hero";
 const faqs = [
   {
     q: "Is this a real company selling courses?",
-    a: "Edujarr is a portfolio/demo learning platform. The courses, users, and enrollments are seeded for demonstration. You can explore every flow without signing up for a paid service.",
+    a: "Convolution LMS is a portfolio/demo learning platform. The courses, users, and enrollments are seeded for demonstration. You can explore every flow without signing up for a paid service.",
   },
   {
     q: "Are courses self-paced?",
@@ -24,7 +24,7 @@ const faqs = [
   },
   {
     q: "Who built this?",
-    a: "Edujarr was built as a full-stack showcase: Next.js, Prisma, PostgreSQL, ImageKit for media, and Better Auth. The codebase is the point — not selling seats.",
+    a: "Convolution LMS was built as a full-stack showcase: Next.js, Prisma, PostgreSQL, ImageKit for media, and Better Auth. The codebase is the point — not selling seats.",
   },
 ];
 

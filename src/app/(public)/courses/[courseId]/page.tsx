@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import {
   Award,
@@ -9,6 +10,7 @@ import {
   Star,
   Users,
 } from "lucide-react";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { CourseReviews } from "@/components/course/course-reviews";
@@ -17,16 +19,9 @@ import { getServerSession } from "@/lib/auth";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 import { prisma } from "@/lib/db";
 import { getLatestPaymentForCourse } from "@/lib/payments";
-import {
-  coursePaymentAmountPaisa,
-  courseRequiresPayment,
-  formatNprFromPaisa,
-} from "@/lib/pricing";
+import { courseRequiresPayment, formatCoursePrice } from "@/lib/pricing";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
-
-function formatPrice(cents: number) {
-  return `$${(cents / 100).toFixed(2)}`;
-}
+import { LessonPreviewRow } from "./lesson-preview";
 
 function formatDuration(minutes: number) {
   const h = Math.floor(minutes / 60);
@@ -42,7 +37,33 @@ function formatLevel(level: string) {
   return level;
 }
 
+function contentParagraphs(content: string | null) {
+  return (content ?? "")
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+}
+
 type Props = { params: Promise<{ courseId: string }> };
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { courseId } = await params;
+  const ctx = await resolveTenantFromHeaders();
+  if (!ctx) return { title: "Course" };
+  const course = await prisma.course.findFirst({
+    where: {
+      organizationId: ctx.organizationId,
+      status: "PUBLISHED",
+      OR: [{ id: courseId }, { slug: courseId }],
+    },
+    select: { title: true, description: true },
+  });
+  if (!course) return { title: "Course not found" };
+  return {
+    title: course.title,
+    description: course.description?.slice(0, 160) || undefined,
+  };
+}
 
 export default async function CourseDetailPage({ params }: Props) {
   const { courseId } = await params;
@@ -66,6 +87,9 @@ export default async function CourseDetailPage({ params }: Props) {
           duration: true,
           isFree: true,
           order: true,
+          videoUrl: true,
+          summary: true,
+          content: true,
         },
       },
       _count: { select: { enrollments: true } },
@@ -88,20 +112,35 @@ export default async function CourseDetailPage({ params }: Props) {
     },
   });
 
+  const reviewCount = course.reviews.length;
   const avgRating =
-    course.reviews.length === 0
-      ? 5
+    reviewCount === 0
+      ? null
       : Math.round(
-          (course.reviews.reduce((sum, r) => sum + r.rating, 0) /
-            course.reviews.length) *
+          (course.reviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount) *
             10,
         ) / 10;
 
   const requiresPayment = courseRequiresPayment(course);
-  const price = requiresPayment
-    ? formatNprFromPaisa(coursePaymentAmountPaisa(course))
-    : formatPrice(course.price);
+  const price = formatCoursePrice(course);
   const image = resolveMediaUrl(course.thumbnail);
+
+  // Only instructor-enabled free lessons of this published course are exposed publicly.
+  const lessons = course.lessons.map((lesson) => {
+    const videoUrl = lesson.isFree ? lesson.videoUrl?.trim() || null : null;
+    const summary = lesson.isFree ? lesson.summary?.trim() || null : null;
+    const paragraphs = lesson.isFree ? contentParagraphs(lesson.content) : [];
+    return {
+      id: lesson.id,
+      title: lesson.title,
+      duration: formatDuration(lesson.duration),
+      preview:
+        videoUrl || summary || paragraphs.length > 0
+          ? { videoUrl, summary, paragraphs }
+          : null,
+    };
+  });
+  const previewCount = lessons.filter((lesson) => lesson.preview).length;
 
   const enrollment =
     session
@@ -126,6 +165,8 @@ export default async function CourseDetailPage({ params }: Props) {
       : latestPayment?.status === "FAILED"
         ? ("rejected" as const)
         : ("none" as const);
+  const rejectionReason =
+    latestPayment?.status === "FAILED" ? latestPayment.rejectionReason : null;
 
   return (
     <div className="bg-[#f7f8fc] pb-20">
@@ -150,8 +191,18 @@ export default async function CourseDetailPage({ params }: Props) {
             </p>
             <div className="mt-6 flex flex-wrap gap-5 text-sm text-[#324361]">
               <span className="inline-flex items-center gap-1.5">
-                <Star className="size-4 fill-[#f5b942] text-[#f5b942]" />
-                {avgRating} rating
+                <Star
+                  className={`size-4 ${
+                    avgRating == null
+                      ? "text-muted"
+                      : "fill-[#f5b942] text-[#f5b942]"
+                  }`}
+                />
+                {avgRating == null
+                  ? "No ratings yet"
+                  : `${avgRating.toFixed(1)} rating · ${reviewCount} review${
+                      reviewCount === 1 ? "" : "s"
+                    }`}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Users className="size-4 text-brand-purple" />
@@ -170,9 +221,8 @@ export default async function CourseDetailPage({ params }: Props) {
                 priceLabel={price}
                 requiresPayment={requiresPayment}
                 paymentStatus={paymentStatus}
-                alreadyEnrolled={
-                  Boolean(enrollment) && session?.user.role === "STUDENT"
-                }
+                rejectionReason={rejectionReason}
+                alreadyEnrolled={Boolean(enrollment)}
               />
               <Button href="/courses" variant="secondary">
                 Back to catalog
@@ -182,16 +232,22 @@ export default async function CourseDetailPage({ params }: Props) {
 
           <div className="min-w-0 overflow-hidden rounded-3xl border border-black/5 bg-[#0b0a2e] shadow-xl">
             <div className="relative aspect-video">
-              <img
+              <Image
                 src={image}
                 alt=""
-                className="size-full object-cover opacity-90"
+                fill
+                sizes="(max-width: 1024px) 100vw, 50vw"
+                className="object-cover opacity-90"
               />
-              <div className="absolute inset-0 flex items-center justify-center bg-brand-navy/25">
-                <span className="flex size-16 items-center justify-center rounded-full bg-white/95 text-brand-navy shadow-lg">
-                  <PlayCircle className="size-8" />
-                </span>
-              </div>
+              {previewCount > 0 ? (
+                <a
+                  href="#curriculum"
+                  className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-brand-navy/85 to-transparent px-4 pb-3 pt-10 text-sm font-semibold text-white transition hover:text-brand-mint"
+                >
+                  <PlayCircle className="size-5" />
+                  {previewCount} free preview lesson{previewCount === 1 ? "" : "s"}
+                </a>
+              ) : null}
             </div>
             <div className="grid grid-cols-3 divide-x divide-white/10 text-center text-white">
               <div className="px-3 py-4">
@@ -199,7 +255,7 @@ export default async function CourseDetailPage({ params }: Props) {
                 <p className="text-xs text-white/60">One-time</p>
               </div>
               <div className="px-3 py-4">
-                <p className="text-lg font-semibold">{course.lessons.length}</p>
+                <p className="text-lg font-semibold">{lessons.length}</p>
                 <p className="text-xs text-white/60">Lessons</p>
               </div>
               <div className="px-3 py-4">
@@ -213,29 +269,39 @@ export default async function CourseDetailPage({ params }: Props) {
 
       <div className="mx-auto grid max-w-[1440px] gap-8 px-5 py-12 md:px-10 lg:grid-cols-[1.4fr_0.6fr] lg:px-16">
         <div className="space-y-8">
-          <section className="rounded-3xl border border-black/5 bg-white p-6 md:p-8">
+          <section
+            id="curriculum"
+            className="scroll-mt-24 rounded-3xl border border-black/5 bg-white p-6 md:p-8"
+          >
             <h2 className="font-display text-2xl text-brand-navy">Curriculum</h2>
+            {previewCount > 0 ? (
+              <p className="mt-1 text-sm text-muted">
+                Open a free preview lesson to try it before you enroll.
+              </p>
+            ) : null}
             <ul className="mt-5 divide-y divide-black/5 overflow-hidden rounded-2xl border border-black/5">
-              {course.lessons.map((lesson, i) => (
+              {lessons.map((lesson, i) => (
                 <li key={lesson.id}>
-                  <div className="flex items-center justify-between gap-3 px-4 py-4 sm:px-5">
-                    <span className="flex min-w-0 flex-1 items-center gap-3 font-medium text-[#324361]">
-                      <BookOpen className="size-4 shrink-0 text-brand-purple" />
-                      <span className="min-w-0">
-                        <span className="line-clamp-2">
+                  {lesson.preview ? (
+                    <LessonPreviewRow
+                      number={i + 1}
+                      title={lesson.title}
+                      duration={lesson.duration}
+                      {...lesson.preview}
+                    />
+                  ) : (
+                    <div className="flex items-center justify-between gap-3 px-4 py-4 sm:px-5">
+                      <span className="flex min-w-0 flex-1 items-center gap-3 font-medium text-[#324361]">
+                        <BookOpen className="size-4 shrink-0 text-brand-purple" />
+                        <span className="line-clamp-2 min-w-0">
                           {i + 1}. {lesson.title}
                         </span>
-                        {lesson.isFree ? (
-                          <span className="mt-1 inline-block rounded bg-brand-teal/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-brand-teal">
-                            Preview
-                          </span>
-                        ) : null}
                       </span>
-                    </span>
-                    <span className="shrink-0 text-sm text-muted">
-                      {formatDuration(lesson.duration)}
-                    </span>
-                  </div>
+                      <span className="shrink-0 text-sm text-muted">
+                        {lesson.duration}
+                      </span>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -253,16 +319,20 @@ export default async function CourseDetailPage({ params }: Props) {
                     href={`/courses/${item.slug}`}
                     className="rounded-2xl border border-black/5 bg-white p-3 transition hover:shadow-md"
                   >
-                    <img
-                      src={resolveMediaUrl(item.thumbnail)}
-                      alt=""
-                      className="aspect-video w-full rounded-xl object-cover"
-                    />
+                    <div className="relative aspect-video w-full overflow-hidden rounded-xl">
+                      <Image
+                        src={resolveMediaUrl(item.thumbnail)}
+                        alt=""
+                        fill
+                        sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                        className="object-cover"
+                      />
+                    </div>
                     <p className="mt-3 line-clamp-2 text-sm font-semibold text-[#324361]">
                       {item.title}
                     </p>
                     <p className="mt-1 text-sm text-brand-navy">
-                      {formatPrice(item.price)}
+                      {formatCoursePrice(item)}
                     </p>
                   </Link>
                 ))}

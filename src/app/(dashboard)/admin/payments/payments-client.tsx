@@ -14,6 +14,7 @@ import {
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { Button } from "@/components/ui/button";
 import { FlashBanner } from "@/components/ui/flash-banner";
+import type { AdminPaymentRow } from "@/lib/dashboard-data";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { formatNprFromPaisa } from "@/lib/pricing";
 
@@ -28,20 +29,7 @@ type PaymentMethodRow = {
   sortOrder: number;
 };
 
-type PaymentRow = {
-  id: string;
-  amount: number;
-  status: string;
-  screenshotUrl: string | null;
-  referenceNote: string | null;
-  rejectionReason?: string | null;
-  createdAt: string;
-  reviewedAt?: string | null;
-  user: { id: string; name: string; email: string };
-  course: { id: string; title: string; slug: string };
-  paymentMethod: { id: string; label: string; type: string } | null;
-  reviewedBy?: { id: string; name: string } | null;
-};
+type PaymentRow = AdminPaymentRow;
 
 type Tab = "methods" | "pending" | "history";
 
@@ -52,6 +40,14 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
   hour: "numeric",
   minute: "2-digit",
 });
+
+const statusLabels: Record<string, string> = {
+  COMPLETED: "Approved",
+  FAILED: "Rejected",
+  PENDING: "Pending",
+  CANCELED: "Canceled",
+  EXPIRED: "Expired",
+};
 
 const emptyMethodForm = {
   type: "ESEWA" as PaymentMethodRow["type"],
@@ -68,19 +64,29 @@ async function responseError(res: Response) {
   return data.error ?? `Request failed (${res.status})`;
 }
 
+class ReviewConflictError extends Error {}
+
 export default function AdminPaymentsClient({
   initialMethods,
   initialPending,
-  initialRecent,
+  initialPendingTotal,
+  initialHistory,
+  initialHistoryHasMore,
 }: {
   initialMethods: PaymentMethodRow[];
   initialPending: PaymentRow[];
-  initialRecent: PaymentRow[];
+  initialPendingTotal: number;
+  initialHistory: PaymentRow[];
+  initialHistoryHasMore: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("pending");
   const [methods, setMethods] = useState(initialMethods);
   const [pending, setPending] = useState(initialPending);
-  const [recent, setRecent] = useState(initialRecent);
+  // The pending list is capped server-side; these weren't sent to the client.
+  const pendingHidden = Math.max(0, initialPendingTotal - initialPending.length);
+  const [recent, setRecent] = useState(initialHistory);
+  const [historyHasMore, setHistoryHasMore] = useState(initialHistoryHasMore);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyMethodForm);
   const [showForm, setShowForm] = useState(false);
@@ -90,7 +96,7 @@ export default function AdminPaymentsClient({
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
 
-  const pendingCount = pending.length;
+  const pendingCount = pending.length + pendingHidden;
 
   const sortedMethods = useMemo(
     () => [...methods].sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label)),
@@ -122,6 +128,7 @@ export default function AdminPaymentsClient({
     const formData = new FormData();
     formData.append("file", file);
     formData.append("provider", "imagekit");
+    formData.append("purpose", "payment-qr");
     const res = await fetch("/api/upload", { method: "POST", body: formData });
     if (!res.ok) throw new Error(await responseError(res));
     const data = (await res.json()) as { upload?: { url?: unknown } };
@@ -203,25 +210,24 @@ export default function AdminPaymentsClient({
           rejectionReason: action === "reject" ? rejectReason : undefined,
         }),
       });
-      if (!res.ok) throw new Error(await responseError(res));
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+        const message = data.error ?? `Request failed (${res.status})`;
+        throw data.code === "ALREADY_REVIEWED"
+          ? new ReviewConflictError(message)
+          : new Error(message);
+      }
 
       const data = (await res.json()) as {
-        payment: { id: string; status: string; rejectionReason?: string | null };
+        payment: PaymentRow | null;
         enrolled?: boolean;
       };
 
       setPending((prev) => prev.filter((p) => p.id !== paymentId));
-      setRecent((prev) => {
-        const existing = pending.find((p) => p.id === paymentId);
-        if (!existing) return prev;
-        const updated: PaymentRow = {
-          ...existing,
-          status: data.payment.status,
-          rejectionReason: data.payment.rejectionReason ?? null,
-          reviewedAt: new Date().toISOString(),
-        };
-        return [updated, ...prev.filter((p) => p.id !== paymentId)].slice(0, 20);
-      });
+      if (data.payment) {
+        const reviewed = data.payment;
+        setRecent((prev) => [reviewed, ...prev.filter((p) => p.id !== paymentId)]);
+      }
 
       setRejectingId(null);
       setRejectReason("");
@@ -233,9 +239,38 @@ export default function AdminPaymentsClient({
           : "Payment rejected.",
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Review failed");
+      if (err instanceof ReviewConflictError) {
+        // Someone else got there first; drop it from the queue.
+        setPending((prev) => prev.filter((p) => p.id !== paymentId));
+        setRejectingId(null);
+        setError(`${err.message} Reload the page to see the latest history.`);
+      } else {
+        setError(err instanceof Error ? err.message : "Review failed");
+      }
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function loadMoreHistory() {
+    setLoadingHistory(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/admin/payments?status=REVIEWED&skip=${recent.length}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) throw new Error(await responseError(res));
+      const data = (await res.json()) as { payments: PaymentRow[]; hasMore: boolean };
+      setRecent((prev) => {
+        const seen = new Set(prev.map((p) => p.id));
+        return [...prev, ...data.payments.filter((p) => !seen.has(p.id))];
+      });
+      setHistoryHasMore(data.hasMore);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load more payments");
+    } finally {
+      setLoadingHistory(false);
     }
   }
 
@@ -247,7 +282,14 @@ export default function AdminPaymentsClient({
       />
 
       <FlashBanner message={flash} onDismiss={() => setFlash(null)} />
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? (
+        <p
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+        >
+          {error}
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         {(
@@ -329,7 +371,7 @@ export default function AdminPaymentsClient({
                     onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
                     required
                     className="w-full rounded-xl border border-black/10 px-3 py-2.5 text-sm"
-                    placeholder="e.g. Edujarr eSewa"
+                    placeholder="e.g. Convolution LMS eSewa"
                   />
                 </label>
                 <label className="block sm:col-span-2">
@@ -360,6 +402,8 @@ export default function AdminPaymentsClient({
                   <span className="mb-1.5 block text-sm font-medium">QR image</span>
                   <div className="flex flex-wrap items-start gap-4">
                     {form.qrImageUrl ? (
+                      // Uploaded QR codes may live on any storage host.
+                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={resolveMediaUrl(form.qrImageUrl)}
                         alt="QR preview"
@@ -422,7 +466,7 @@ export default function AdminPaymentsClient({
                 <Button type="button" variant="secondary" onClick={resetForm}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={busyId === "save-method"}>
+                <Button type="submit" loading={busyId === "save-method"}>
                   {editingId ? "Save changes" : "Create method"}
                 </Button>
               </div>
@@ -455,6 +499,7 @@ export default function AdminPaymentsClient({
                     ) : null}
                   </div>
                   {method.qrImageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={resolveMediaUrl(method.qrImageUrl)}
                       alt=""
@@ -470,7 +515,7 @@ export default function AdminPaymentsClient({
                     type="button"
                     variant="secondary"
                     onClick={() => deleteMethod(method.id)}
-                    disabled={busyId === method.id}
+                    loading={busyId === method.id}
                   >
                     <Trash2 className="size-4" />
                     Delete
@@ -487,6 +532,12 @@ export default function AdminPaymentsClient({
 
       {tab === "pending" ? (
         <div className="space-y-3">
+          {pendingHidden > 0 ? (
+            <p className="rounded-xl border border-brand-purple/15 bg-[#f7f5ff] px-4 py-3 text-sm text-brand-navy">
+              Showing the oldest {initialPending.length} of {initialPendingTotal} pending
+              payments. Reload the page after reviewing these to see the rest.
+            </p>
+          ) : null}
           {pending.length === 0 ? (
             <p className="rounded-2xl border border-black/5 bg-white p-6 text-sm text-muted">
               No pending payment submissions.
@@ -523,6 +574,7 @@ export default function AdminPaymentsClient({
                       rel="noreferrer"
                       className="inline-flex shrink-0 flex-col items-center gap-2"
                     >
+                      {/* eslint-disable-next-line @next/next/no-img-element -- user-uploaded screenshot of unknown size/host */}
                       <img
                         src={payment.screenshotUrl}
                         alt="Payment screenshot"
@@ -557,7 +609,7 @@ export default function AdminPaymentsClient({
                       <Button
                         type="button"
                         onClick={() => reviewPayment(payment.id, "reject")}
-                        disabled={busyId === payment.id}
+                        loading={busyId === payment.id}
                       >
                         Confirm reject
                       </Button>
@@ -568,7 +620,7 @@ export default function AdminPaymentsClient({
                     <Button
                       type="button"
                       onClick={() => reviewPayment(payment.id, "approve")}
-                      disabled={busyId === payment.id}
+                      loading={busyId === payment.id}
                     >
                       <CheckCircle2 className="size-4" />
                       Approve & enroll
@@ -577,7 +629,7 @@ export default function AdminPaymentsClient({
                       type="button"
                       variant="secondary"
                       onClick={() => setRejectingId(payment.id)}
-                      disabled={busyId === payment.id}
+                      loading={busyId === payment.id}
                     >
                       <XCircle className="size-4" />
                       Reject
@@ -591,43 +643,92 @@ export default function AdminPaymentsClient({
       ) : null}
 
       {tab === "history" ? (
-        <div className="overflow-x-auto rounded-2xl border border-black/5 bg-white">
-          <table className="min-w-full text-left text-sm">
-            <thead className="border-b border-black/5 bg-surface/50 text-xs uppercase tracking-wide text-muted">
-              <tr>
-                <th className="px-4 py-3">Date</th>
-                <th className="px-4 py-3">Student</th>
-                <th className="px-4 py-3">Course</th>
-                <th className="px-4 py-3">Amount</th>
-                <th className="px-4 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black/5">
-              {recent.map((payment) => (
-                <tr key={payment.id}>
-                  <td className="px-4 py-3 text-muted">
-                    {dateFormatter.format(new Date(payment.createdAt))}
-                  </td>
-                  <td className="px-4 py-3">{payment.user.name}</td>
-                  <td className="px-4 py-3">{payment.course.title}</td>
-                  <td className="px-4 py-3">{formatNprFromPaisa(payment.amount)}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                        payment.status === "COMPLETED"
-                          ? "bg-green-50 text-green-700"
-                          : payment.status === "PENDING"
-                            ? "bg-amber-50 text-amber-700"
-                            : "bg-red-50 text-red-700"
-                      }`}
-                    >
-                      {payment.status}
-                    </span>
-                  </td>
+        <div className="space-y-3">
+          <div className="overflow-x-auto rounded-2xl border border-black/5 bg-white">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-black/5 bg-surface/50 text-xs uppercase tracking-wide text-muted">
+                <tr>
+                  <th className="px-4 py-3">Submitted</th>
+                  <th className="px-4 py-3">Student</th>
+                  <th className="px-4 py-3">Course</th>
+                  <th className="px-4 py-3">Amount</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Reviewed</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-black/5">
+                {recent.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-10 text-center text-muted">
+                      No reviewed payments yet.
+                    </td>
+                  </tr>
+                ) : null}
+                {recent.map((payment) => (
+                  <tr key={payment.id} className="align-top">
+                    <td className="whitespace-nowrap px-4 py-3 text-muted">
+                      {dateFormatter.format(new Date(payment.createdAt))}
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="text-[#324361]">{payment.user.name}</p>
+                      <p className="text-xs text-muted">{payment.user.email}</p>
+                    </td>
+                    <td className="px-4 py-3 text-[#324361]">{payment.course.title}</td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      {formatNprFromPaisa(payment.amount)}
+                      {payment.paymentMethod ? (
+                        <p className="text-xs text-muted">{payment.paymentMethod.label}</p>
+                      ) : null}
+                    </td>
+                    <td className="max-w-[260px] px-4 py-3">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          payment.status === "COMPLETED"
+                            ? "bg-green-50 text-green-700"
+                            : payment.status === "PENDING"
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-red-50 text-red-700"
+                        }`}
+                      >
+                        {statusLabels[payment.status] ?? payment.status}
+                      </span>
+                      {payment.status === "FAILED" && payment.rejectionReason ? (
+                        <p className="mt-1.5 text-xs text-red-700">
+                          Reason: {payment.rejectionReason}
+                        </p>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-3 text-muted">
+                      {payment.reviewedAt ? (
+                        <>
+                          <p className="text-[#324361]">
+                            {payment.reviewedBy?.name ?? "Unknown admin"}
+                          </p>
+                          <p className="whitespace-nowrap text-xs">
+                            {dateFormatter.format(new Date(payment.reviewedAt))}
+                          </p>
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {historyHasMore ? (
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={() => void loadMoreHistory()}
+                disabled={loadingHistory}
+                className="h-10 rounded-xl border border-black/8 bg-white px-4 text-sm font-semibold text-brand-navy transition hover:bg-surface disabled:cursor-wait disabled:opacity-60"
+              >
+                {loadingHistory ? "Loading…" : "Load more"}
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

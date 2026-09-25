@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { CourseCard } from "@/components/course/course-card";
@@ -8,7 +9,7 @@ import { resolveTenantFromHeaders } from "@/lib/tenant";
 
 export default async function HomePage() {
   const ctx = await resolveTenantFromHeaders();
-  const brandName = ctx?.organization.name ?? "Edujarr";
+  const brandName = ctx?.organization.name ?? "Convolution LMS";
   const featuredCourses = ctx
     ? await getFeaturedCoursesForHome(ctx.organizationId)
     : [];
@@ -54,9 +55,12 @@ export default async function HomePage() {
 
           <div className="relative hidden min-h-[420px] lg:block">
             <div className="absolute bottom-0 right-0 z-10 h-[88%] w-auto">
-              <img
+              <Image
                 src={staticAssets.heroWoman}
                 alt=""
+                width={480}
+                height={800}
+                preload
                 className="h-full w-auto max-w-none object-contain object-bottom"
               />
             </div>

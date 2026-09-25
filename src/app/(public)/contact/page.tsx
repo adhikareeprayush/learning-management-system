@@ -1,26 +1,66 @@
-"use client";
-
-import { useState } from "react";
-import { Mail } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { FlashBanner } from "@/components/ui/flash-banner";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { Mail, MapPin, Phone } from "lucide-react";
 import { PageHero } from "@/components/layout/page-hero";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
 
-export default function ContactPage() {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [message, setMessage] = useState("");
-  const [flash, setFlash] = useState<string | null>(null);
+export const metadata: Metadata = {
+  title: "Contact",
+  description: "Email or call the institute.",
+};
 
-  function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setFlash(
-      `Thanks${name.trim() ? `, ${name.trim()}` : ""} — message received. This demo doesn't send email yet, but the form works.`,
-    );
-    setName("");
-    setEmail("");
-    setMessage("");
+const FALLBACK_EMAIL = "hello@convolutionlabs.com";
+const FALLBACK_LOCATION = "Kathmandu, Nepal";
+
+function settingString(settings: unknown, ...keys: string[]) {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    return null;
   }
+  for (const key of keys) {
+    const value = (settings as Record<string, unknown>)[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+export default async function ContactPage() {
+  const ctx = await resolveTenantFromHeaders();
+  const settings = ctx?.organization.settings;
+  const name = ctx?.organization.name ?? "Convolution LMS";
+  const email =
+    settingString(settings, "contactEmail", "supportEmail", "email") ??
+    FALLBACK_EMAIL;
+  const phone = settingString(settings, "contactPhone", "phone");
+  const location =
+    settingString(settings, "address", "location") ?? FALLBACK_LOCATION;
+
+  const channels = [
+    {
+      icon: Mail,
+      label: "Email",
+      value: email,
+      href: `mailto:${email}`,
+      hint: "Best for course, payment, and certificate questions.",
+    },
+    ...(phone
+      ? [
+          {
+            icon: Phone,
+            label: "Phone",
+            value: phone,
+            href: `tel:${phone.replace(/[^\d+]/g, "")}`,
+            hint: "During office hours.",
+          },
+        ]
+      : []),
+    {
+      icon: MapPin,
+      label: "Location",
+      value: location,
+      href: null,
+      hint: null,
+    },
+  ];
 
   return (
     <div className="bg-white pb-20">
@@ -31,57 +71,67 @@ export default function ContactPage() {
             Get in <span className="text-brand-mint">touch</span>
           </>
         }
-        description="Questions about the project, a walkthrough, or feedback on the build."
+        description={`Questions about a course, a payment, or a certificate? Reach ${name} directly.`}
         icon={Mail}
       />
-      <div className="mx-auto grid max-w-[1440px] gap-10 px-5 py-14 md:grid-cols-2 md:px-10 lg:px-16">
+      <div className="mx-auto grid max-w-[1440px] gap-10 px-5 py-14 md:grid-cols-[1.1fr_0.9fr] md:px-10 lg:px-16">
+        <ul className="grid gap-4 sm:grid-cols-2">
+          {channels.map((channel) => {
+            const Icon = channel.icon;
+            return (
+              <li
+                key={channel.label}
+                className="rounded-2xl border border-black/5 bg-surface/40 p-5"
+              >
+                <span className="grid size-10 place-items-center rounded-xl bg-white text-brand-purple shadow-sm">
+                  <Icon className="size-5" strokeWidth={1.75} />
+                </span>
+                <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">
+                  {channel.label}
+                </p>
+                {channel.href ? (
+                  <a
+                    href={channel.href}
+                    className="mt-1 block break-words text-lg font-semibold text-brand-navy transition hover:text-brand-purple"
+                  >
+                    {channel.value}
+                  </a>
+                ) : (
+                  <p className="mt-1 text-lg font-semibold text-brand-navy">
+                    {channel.value}
+                  </p>
+                )}
+                {channel.hint ? (
+                  <p className="mt-1 text-sm text-muted">{channel.hint}</p>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
         <div className="space-y-4 text-muted">
           <p>
-            Edujarr is a portfolio LMS demo. If you&apos;re reviewing the
-            implementation or want to discuss the stack, reach out.
+            There&apos;s no contact form on this site — write to us by email and
+            the message goes straight to our inbox. Include your account email
+            and, for payments, the course name so we can find your record.
           </p>
           <p>
-            <span className="font-semibold text-[#324361]">Email</span>
-            <br />
-            hello@edujarr.com
-          </p>
-          <p>
-            <span className="font-semibold text-[#324361]">Location</span>
-            <br />
-            Kathmandu, Nepal
+            Many common questions are already answered in the{" "}
+            <Link
+              href="/faq"
+              className="font-semibold text-brand-purple hover:text-brand-teal"
+            >
+              FAQ
+            </Link>
+            . To check a certificate, use{" "}
+            <Link
+              href="/verify"
+              className="font-semibold text-brand-purple hover:text-brand-teal"
+            >
+              credential verification
+            </Link>
+            .
           </p>
         </div>
-        <form
-          onSubmit={onSubmit}
-          className="space-y-4 rounded-2xl border border-black/5 bg-surface/40 p-6"
-        >
-          <FlashBanner message={flash} onDismiss={() => setFlash(null)} />
-          <input
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Your name"
-            className="w-full rounded-xl border border-black/10 bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-brand-purple/30"
-          />
-          <input
-            required
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@email.com"
-            className="w-full rounded-xl border border-black/10 bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-brand-purple/30"
-          />
-          <textarea
-            required
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            placeholder="What's on your mind?"
-            className="min-h-32 w-full rounded-xl border border-black/10 bg-white px-4 py-3 outline-none focus:ring-2 focus:ring-brand-purple/30"
-          />
-          <Button submit className="w-full">
-            Send message
-          </Button>
-        </form>
       </div>
     </div>
   );

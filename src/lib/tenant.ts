@@ -9,7 +9,7 @@ export type TenantContext = {
 };
 
 const DEFAULT_ORG_SLUG =
-  process.env.DEFAULT_ORG_SLUG?.trim().toLowerCase() || "edujarr";
+  process.env.DEFAULT_ORG_SLUG?.trim().toLowerCase() || "convolution-labs";
 
 export async function getDefaultOrganization() {
   try {

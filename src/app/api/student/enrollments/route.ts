@@ -5,11 +5,11 @@ import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
 
 export async function GET() {
   try {
-    const tenant = await requireTenantApi();
-    if (tenant instanceof Response) return tenant;
-
     const session = await requireSession();
     if (!session) return jsonError("Unauthorized", 401);
+
+    const tenant = await requireTenantApi();
+    if (tenant instanceof Response) return tenant;
 
     const studentId = session.user.id;
 
@@ -106,15 +106,15 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const tenant = await requireTenantApi();
-    if (tenant instanceof Response) return tenant;
-    if (!tenant.member) return jsonError("Not a member of this institute", 403);
-
     const session = await requireSession();
     if (!session) return jsonError("Unauthorized", 401);
 
-    const body = await request.json();
-    const courseId = body.courseId as string | undefined;
+    const tenant = await requireTenantApi();
+    if (tenant instanceof Response) return tenant;
+
+    const body = await request.json().catch(() => ({}));
+    const courseId =
+      typeof body.courseId === "string" ? body.courseId.trim() : "";
 
     if (!courseId) {
       return NextResponse.json(
@@ -123,9 +123,10 @@ export async function POST(request: Request) {
       );
     }
 
+    // Membership is created on demand by enrollUserInCourse.
     const result = await enrollUserInCourse(
       session.user.id,
-      tenant.member.role,
+      tenant.member?.role ?? null,
       courseId,
       tenant.organizationId,
     );

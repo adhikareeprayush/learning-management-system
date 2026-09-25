@@ -1,4 +1,4 @@
-# Edujarr LMS
+# Convolution LMS
 
 Single-institute learning platform: courses, roadmaps, lesson videos, and
 manual screenshot payments.
@@ -22,7 +22,7 @@ App: http://localhost:3005
 |-------|------|
 | alice@example.com | Student |
 | instructor@example.com | Instructor |
-| admin@edujarr.com | Admin |
+| admin@convolutionlabs.com | Admin |
 
 ### Full Docker
 

@@ -346,7 +346,7 @@ export async function recalculateRoadmapProgress(
   const progress = Math.round((completed / courseIds.length) * 100);
 
   await prisma.roadmapEnrollment.updateMany({
-    where: { roadmapId, studentId },
+    where: { roadmapId, studentId, progress: { not: progress } },
     data: { progress },
   });
 
@@ -371,16 +371,41 @@ export async function recalculateRoadmapsForCourse(
   }
 }
 
+export type RoadmapCourseEnrollStatus =
+  | "enrolled"
+  | "already_enrolled"
+  | "payment_required"
+  | "failed";
+
+export type RoadmapCourseEnrollResult = {
+  courseId: string;
+  slug: string;
+  title: string;
+  status: RoadmapCourseEnrollStatus;
+  error?: string;
+};
+
 export type EnrollRoadmapResult =
   | {
       ok: true;
       roadmapSlug: string;
-      roleChanged: boolean;
+      roleChanged: false;
       alreadyEnrolled: boolean;
+      /** Courses newly enrolled by this request. */
       coursesEnrolled: number;
+      /** Courses the student is enrolled in after this request. */
+      enrolledCount: number;
+      /** Paid courses that still need a purchase. */
+      paymentRequiredCount: number;
+      courses: RoadmapCourseEnrollResult[];
     }
   | { ok: false; error: string; status: number };
 
+/**
+ * Enrolls the user in the roadmap and every free (or already purchased)
+ * course on it. Paid courses are reported back as `payment_required` so the
+ * UI can send the learner to checkout; the user's org role is never changed.
+ */
 export async function enrollUserInRoadmap(
   userId: string,
   orgRole: OrgRole | string | null,
@@ -393,7 +418,9 @@ export async function enrollUserInRoadmap(
       courses: {
         orderBy: { order: "asc" },
         include: {
-          course: { select: { id: true, status: true } },
+          course: {
+            select: { id: true, slug: true, title: true, status: true },
+          },
         },
       },
     },
@@ -414,14 +441,6 @@ export async function enrollUserInRoadmap(
     };
   }
 
-  const roleChanged = orgRole != null && orgRole !== "STUDENT";
-  if (roleChanged) {
-    await prisma.organizationMember.updateMany({
-      where: { organizationId, userId },
-      data: { role: "STUDENT" },
-    });
-  }
-
   const existing = await prisma.roadmapEnrollment.findUnique({
     where: {
       roadmapId_studentId: { roadmapId: roadmap.id, studentId: userId },
@@ -429,21 +448,43 @@ export async function enrollUserInRoadmap(
   });
 
   if (!existing) {
-    await prisma.roadmapEnrollment.create({
-      data: { roadmapId: roadmap.id, studentId: userId },
-    });
+    try {
+      await prisma.roadmapEnrollment.create({
+        data: { roadmapId: roadmap.id, studentId: userId },
+      });
+    } catch (error) {
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? String((error as { code: unknown }).code)
+          : "";
+      if (code !== "P2002") throw error;
+    }
   }
 
-  let coursesEnrolled = 0;
+  const courses: RoadmapCourseEnrollResult[] = [];
   for (const item of publishedCourses) {
     const result = await enrollUserInCourse(
       userId,
-      "STUDENT",
+      orgRole,
       item.course.id,
       organizationId,
     );
-    if (result.ok && !result.alreadyEnrolled) {
-      coursesEnrolled += 1;
+    const base = {
+      courseId: item.course.id,
+      slug: item.course.slug,
+      title: item.course.title,
+    };
+    if (result.ok) {
+      courses.push({
+        ...base,
+        status: result.alreadyEnrolled ? "already_enrolled" : "enrolled",
+      });
+    } else {
+      courses.push({
+        ...base,
+        status: result.status === 402 ? "payment_required" : "failed",
+        error: result.error,
+      });
     }
   }
 
@@ -452,8 +493,14 @@ export async function enrollUserInRoadmap(
   return {
     ok: true,
     roadmapSlug: roadmap.slug,
-    roleChanged,
+    roleChanged: false,
     alreadyEnrolled: Boolean(existing),
-    coursesEnrolled,
+    coursesEnrolled: courses.filter((c) => c.status === "enrolled").length,
+    enrolledCount: courses.filter(
+      (c) => c.status === "enrolled" || c.status === "already_enrolled",
+    ).length,
+    paymentRequiredCount: courses.filter((c) => c.status === "payment_required")
+      .length,
+    courses,
   };
 }

@@ -7,6 +7,7 @@ import {
   requireTenantApi,
 } from "@/lib/api";
 import { canAccessLesson, findLessonForTeacher } from "@/lib/course-access";
+import { redactResourceForLearner } from "@/lib/lesson-resources";
 
 type Params = { params: Promise<{ lessonId: string }> };
 
@@ -36,7 +37,20 @@ export async function GET(_request: Request, { params }: Params) {
     orderBy: { createdAt: "asc" },
   });
 
-  return Response.json({ resources });
+  const canManage =
+    isTeacher(session, tenant.member) &&
+    Boolean(
+      await findLessonForTeacher(
+        lessonId,
+        tenant.organizationId,
+        session,
+        tenant.member,
+      ),
+    );
+
+  return Response.json({
+    resources: canManage ? resources : resources.map(redactResourceForLearner),
+  });
 }
 
 export async function POST(request: Request, { params }: Params) {

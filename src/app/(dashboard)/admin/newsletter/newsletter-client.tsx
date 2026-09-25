@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Mail, Megaphone, Search, Send, Users, X } from "lucide-react";
+import { CheckCheck, Info, Mail, Megaphone, Pencil, Search, Trash2, Users, X } from "lucide-react";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { Button } from "@/components/ui/button";
 import { FlashBanner } from "@/components/ui/flash-banner";
@@ -51,6 +51,9 @@ export default function AdminNewsletterClient({
   const [body, setBody] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editSubject, setEditSubject] = useState("");
+  const [editBody, setEditBody] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -138,8 +141,15 @@ export default function AdminNewsletterClient({
     }
   }
 
-  async function sendCampaign(campaignId: string) {
-    setBusyId(campaignId);
+  async function markSent(campaign: AdminNewsletterCampaign) {
+    if (
+      !window.confirm(
+        `Mark “${campaign.subject}” as sent? No email will be delivered — this only records it. Sent campaigns can't be edited.`,
+      )
+    ) {
+      return;
+    }
+    setBusyId(campaign.id);
     setError(null);
     setFlash(null);
 
@@ -147,7 +157,7 @@ export default function AdminNewsletterClient({
       const res = await fetch("/api/admin/newsletter/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "send", campaignId }),
+        body: JSON.stringify({ action: "mark_sent", campaignId: campaign.id }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
@@ -156,17 +166,79 @@ export default function AdminNewsletterClient({
       };
 
       if (!res.ok || !data.campaign) {
-        throw new Error(data.error ?? "Send failed");
+        throw new Error(data.error ?? "Could not update campaign");
       }
 
       setCampaigns((prev) =>
-        prev.map((item) => (item.id === campaignId ? data.campaign! : item)),
+        prev.map((item) => (item.id === campaign.id ? data.campaign! : item)),
       );
       setFlash(
-        `Campaign sent to ${data.recipientCount ?? data.campaign.recipientCount} active subscribers.`,
+        `Campaign marked as sent (${data.recipientCount ?? data.campaign.recipientCount} active subscribers on record). No emails were delivered.`,
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Send failed");
+      setError(err instanceof Error ? err.message : "Could not update campaign");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function startEdit(campaign: AdminNewsletterCampaign) {
+    setEditingId(campaign.id);
+    setEditSubject(campaign.subject);
+    setEditBody(campaign.body);
+    setError(null);
+  }
+
+  async function saveEdit(event: React.FormEvent, campaignId: string) {
+    event.preventDefault();
+    setBusyId(campaignId);
+    setError(null);
+    setFlash(null);
+
+    try {
+      const res = await fetch(`/api/admin/newsletter/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject: editSubject, body: editBody }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        campaign?: AdminNewsletterCampaign;
+      };
+      if (!res.ok || !data.campaign) {
+        throw new Error(data.error ?? "Could not save campaign");
+      }
+      setCampaigns((prev) =>
+        prev.map((item) => (item.id === campaignId ? data.campaign! : item)),
+      );
+      setEditingId(null);
+      setFlash("Draft updated.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save campaign");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function deleteCampaign(campaign: AdminNewsletterCampaign) {
+    if (!window.confirm(`Delete the draft “${campaign.subject}”?`)) return;
+    setBusyId(campaign.id);
+    setError(null);
+    setFlash(null);
+
+    try {
+      const res = await fetch(`/api/admin/newsletter/campaigns/${campaign.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(data.error ?? "Could not delete campaign");
+      }
+      setCampaigns((prev) => prev.filter((item) => item.id !== campaign.id));
+      if (editingId === campaign.id) setEditingId(null);
+      setFlash("Draft deleted.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete campaign");
     } finally {
       setBusyId(null);
     }
@@ -176,11 +248,18 @@ export default function AdminNewsletterClient({
     <div className="space-y-6">
       <DashboardHeader
         title="Newsletter"
-        subtitle="Manage subscribers and send platform updates from the admin dashboard."
+        subtitle="Manage subscribers and draft platform updates."
       />
 
       <FlashBanner message={flash} onDismiss={() => setFlash(null)} />
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? (
+        <p
+          role="alert"
+          className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+        >
+          {error}
+        </p>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="rounded-2xl border border-black/5 bg-white p-5 shadow-sm">
@@ -211,7 +290,7 @@ export default function AdminNewsletterClient({
               <Megaphone className="size-5" />
             </span>
             <div>
-              <p className="text-sm text-[#5c6b82]">Campaigns sent</p>
+              <p className="text-sm text-[#5c6b82]">Marked as sent</p>
               <p className="font-display text-2xl text-[#0b0a2e]">
                 {campaigns.filter((c) => c.status === "SENT").length}
               </p>
@@ -244,6 +323,14 @@ export default function AdminNewsletterClient({
           Campaigns
         </button>
       </div>
+
+      <p className="flex items-start gap-2 rounded-xl border border-brand-purple/15 bg-[#f7f5ff] px-4 py-3 text-sm text-brand-navy">
+        <Info className="mt-0.5 size-4 shrink-0 text-brand-purple" />
+        <span>
+          Email delivery isn&apos;t configured for this platform yet. Campaigns are saved as
+          drafts and &ldquo;Mark as sent&rdquo; only records them — no emails go out.
+        </span>
+      </p>
 
       {tab === "subscribers" ? (
         <div className="rounded-2xl border border-black/5 bg-white shadow-sm">
@@ -336,7 +423,7 @@ export default function AdminNewsletterClient({
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-[#5c6b82]">
-              Draft campaigns here, then send to all active subscribers.
+              Draft updates here, send them from your own email tool, then mark them as sent.
             </p>
             <Button onClick={() => setComposing((value) => !value)}>
               {composing ? "Close composer" : "New campaign"}
@@ -373,7 +460,7 @@ export default function AdminNewsletterClient({
                   placeholder="Write your newsletter update..."
                 />
               </div>
-              <Button type="submit" disabled={busyId === "compose"}>
+              <Button type="submit" loading={busyId === "compose"}>
                 {busyId === "compose" ? "Saving…" : "Save draft"}
               </Button>
             </form>
@@ -385,51 +472,129 @@ export default function AdminNewsletterClient({
                 No campaigns yet. Create your first draft to get started.
               </div>
             ) : (
-              campaigns.map((campaign) => (
-                <article
-                  key={campaign.id}
-                  className="rounded-2xl border border-black/5 bg-white p-5 shadow-sm"
-                >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="font-display text-lg text-[#0b0a2e]">
-                          {campaign.subject}
-                        </h3>
-                        <span
-                          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                            campaign.status === "SENT"
-                              ? "bg-emerald-50 text-emerald-800"
-                              : "bg-amber-50 text-amber-900"
-                          }`}
-                        >
-                          {campaign.status === "SENT" ? "Sent" : "Draft"}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-sm text-[#5c6b82]">
-                        By {campaign.createdBy.name} ·{" "}
-                        {dateFormatter.format(new Date(campaign.createdAt))}
-                        {campaign.status === "SENT"
-                          ? ` · ${campaign.recipientCount} recipients`
-                          : null}
-                      </p>
-                    </div>
-                    {campaign.status === "DRAFT" ? (
-                      <Button
-                        onClick={() => sendCampaign(campaign.id)}
-                        disabled={busyId === campaign.id || activeCount === 0}
-                        className="shrink-0"
+              campaigns.map((campaign) =>
+                editingId === campaign.id ? (
+                  <form
+                    key={campaign.id}
+                    onSubmit={(event) => void saveEdit(event, campaign.id)}
+                    className="space-y-4 rounded-2xl border border-brand-purple/25 bg-white p-5 shadow-sm"
+                  >
+                    <div>
+                      <label
+                        htmlFor={`subject-${campaign.id}`}
+                        className="mb-1.5 block text-sm font-medium text-[#324361]"
                       >
-                        <Send className="size-4" />
-                        {busyId === campaign.id ? "Sending…" : "Send now"}
-                      </Button>
-                    ) : null}
-                  </div>
-                  <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-[#324361]">
-                    {campaign.body}
-                  </p>
-                </article>
-              ))
+                        Subject
+                      </label>
+                      <input
+                        id={`subject-${campaign.id}`}
+                        required
+                        maxLength={200}
+                        value={editSubject}
+                        onChange={(event) => setEditSubject(event.target.value)}
+                        className="w-full rounded-xl border border-black/10 px-3 py-2.5 text-sm outline-none focus:border-brand-purple"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor={`body-${campaign.id}`}
+                        className="mb-1.5 block text-sm font-medium text-[#324361]"
+                      >
+                        Message
+                      </label>
+                      <textarea
+                        id={`body-${campaign.id}`}
+                        required
+                        rows={8}
+                        value={editBody}
+                        onChange={(event) => setEditBody(event.target.value)}
+                        className="w-full rounded-xl border border-black/10 px-3 py-2.5 text-sm outline-none focus:border-brand-purple"
+                      />
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingId(null)}
+                        className="h-10 rounded-xl border border-black/8 bg-white px-4 text-sm font-semibold text-muted transition hover:bg-surface"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={busyId === campaign.id}
+                        className="h-10 rounded-xl bg-brand-navy px-4 text-sm font-semibold text-white transition hover:bg-brand-navy/90 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {busyId === campaign.id ? "Saving…" : "Save draft"}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <article
+                    key={campaign.id}
+                    className="rounded-2xl border border-black/5 bg-white p-5 shadow-sm"
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-display text-lg text-[#0b0a2e]">
+                            {campaign.subject}
+                          </h3>
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                              campaign.status === "SENT"
+                                ? "bg-emerald-50 text-emerald-800"
+                                : "bg-amber-50 text-amber-900"
+                            }`}
+                          >
+                            {campaign.status === "SENT" ? "Marked sent" : "Draft"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-sm text-[#5c6b82]">
+                          By {campaign.createdBy.name} ·{" "}
+                          {dateFormatter.format(new Date(campaign.createdAt))}
+                          {campaign.status === "SENT" && campaign.sentAt
+                            ? ` · marked sent ${dateFormatter.format(new Date(campaign.sentAt))} (${campaign.recipientCount} active subscribers)`
+                            : null}
+                        </p>
+                      </div>
+                      {campaign.status === "DRAFT" ? (
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => startEdit(campaign)}
+                            disabled={busyId === campaign.id}
+                            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-black/8 bg-white px-3 text-sm font-semibold text-brand-navy transition hover:bg-surface disabled:opacity-50"
+                          >
+                            <Pencil className="size-3.5" />
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void deleteCampaign(campaign)}
+                            disabled={busyId === campaign.id}
+                            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-black/8 bg-white px-3 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-50"
+                          >
+                            <Trash2 className="size-3.5" />
+                            Delete
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void markSent(campaign)}
+                            disabled={busyId === campaign.id}
+                            className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-brand-navy px-3 text-sm font-semibold text-white transition hover:bg-brand-navy/90 disabled:opacity-50"
+                          >
+                            <CheckCheck className="size-3.5" />
+                            {busyId === campaign.id ? "Saving…" : "Mark as sent"}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-[#324361]">
+                      {campaign.body}
+                    </p>
+                  </article>
+                ),
+              )
             )}
           </div>
         </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, ClipboardPlus, Save, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, ClipboardPlus, Pencil, Save, Trash2 } from "lucide-react";
 import { FlashBanner } from "@/components/ui/flash-banner";
 
 type Submission = {
@@ -40,6 +40,66 @@ function formatDate(value: string | null) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
+/** ISO timestamp → value for a datetime-local input, in the browser's time zone. */
+function toLocalInputValue(value: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+type AssignmentDetails = Pick<Assignment, "title" | "description" | "dueDate">;
+
+function AssignmentEditor({
+  assignment,
+  onSaved,
+  onCancel,
+}: {
+  assignment: Assignment;
+  onSaved: (details: AssignmentDetails) => void;
+  onCancel: () => void;
+}) {
+  const [title, setTitle] = useState(assignment.title);
+  const [description, setDescription] = useState(assignment.description);
+  const [dueDate, setDueDate] = useState(toLocalInputValue(assignment.dueDate));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      const data = await request<{ assignment: { title: string; description: string | null; dueDate: string | null } }>(`/api/assignments/${assignment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          description,
+          dueDate: dueDate ? new Date(dueDate).toISOString() : null,
+        }),
+      });
+      onSaved({
+        title: data.assignment.title,
+        description: data.assignment.description ?? "",
+        dueDate: data.assignment.dueDate,
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not save assignment");
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={save} className="grid gap-3 rounded-xl bg-surface/60 p-3 lg:grid-cols-2">
+      <label className="block"><span className="mb-1 block text-xs font-semibold text-muted">Title</span><input required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} className="w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
+      <label className="block"><span className="mb-1 block text-xs font-semibold text-muted">Due date</span><input type="datetime-local" value={dueDate} onChange={(event) => setDueDate(event.target.value)} className="w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
+      <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Instructions</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} className="min-h-24 w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
+      {error ? <p role="alert" className="text-xs text-red-700 lg:col-span-2">{error}</p> : null}
+      <div className="flex justify-end gap-2 lg:col-span-2"><button type="button" onClick={onCancel} disabled={saving} className="rounded-xl px-3 py-2 text-sm font-semibold text-muted hover:bg-white disabled:opacity-50">Cancel</button><button disabled={saving || !title.trim()} className="inline-flex items-center gap-1.5 rounded-xl bg-brand-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save className="size-4" /> {saving ? "Saving…" : "Save changes"}</button></div>
+    </form>
+  );
+}
+
 function GradeForm({ submission, onGraded }: { submission: Submission; onGraded: (submission: Submission) => void }) {
   const [grade, setGrade] = useState(submission.grade?.toString() ?? "");
   const [feedback, setFeedback] = useState(submission.feedback);
@@ -68,7 +128,7 @@ function GradeForm({ submission, onGraded }: { submission: Submission; onGraded:
     <form onSubmit={save} className="mt-3 grid gap-2 rounded-xl bg-surface/60 p-3 sm:grid-cols-[100px_1fr_auto]">
       <label><span className="mb-1 block text-[11px] font-semibold text-muted">Grade / 100</span><input required type="number" min="0" max="100" step="0.1" value={grade} onChange={(event) => setGrade(event.target.value)} className="w-full rounded-lg border border-black/10 bg-white px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
       <label><span className="mb-1 block text-[11px] font-semibold text-muted">Feedback</span><input value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="Actionable feedback" className="w-full rounded-lg border border-black/10 bg-white px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
-      <button disabled={saving || grade === ""} className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#083f9b] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"><Save className="size-3.5" /> {saving ? "Saving…" : "Save grade"}</button>
+      <button disabled={saving || grade === ""} className="mt-auto inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-blue px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"><Save className="size-3.5" /> {saving ? "Saving…" : "Save grade"}</button>
       {error ? <p role="alert" className="text-xs text-red-700 sm:col-span-3">{error}</p> : null}
     </form>
   );
@@ -80,6 +140,7 @@ export function AssignmentManager({ course, initialAssignments }: Props) {
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [expanded, setExpanded] = useState<string | null>(initialAssignments[0]?.id ?? null);
+  const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -132,6 +193,12 @@ export function AssignmentManager({ course, initialAssignments }: Props) {
     }
   }
 
+  function saveDetails(assignmentId: string, details: AssignmentDetails) {
+    setAssignments((current) => current.map((assignment) => assignment.id === assignmentId ? { ...assignment, ...details } : assignment));
+    setEditing(null);
+    setFlash(`Assignment “${details.title}” updated.`);
+  }
+
   function updateSubmission(assignmentId: string, graded: Submission) {
     setAssignments((current) => current.map((assignment) => assignment.id === assignmentId ? { ...assignment, submissions: assignment.submissions.map((submission) => submission.id === graded.id ? graded : submission) } : assignment));
     setFlash(`Grade saved for ${graded.student.name}.`);
@@ -154,8 +221,8 @@ export function AssignmentManager({ course, initialAssignments }: Props) {
         const gradedCount = assignment.submissions.filter((submission) => submission.status === "GRADED").length;
         return (
           <article key={assignment.id} className="overflow-hidden rounded-2xl border border-black/5 bg-white">
-            <div className="flex items-center gap-2 px-4 py-4 sm:px-5"><button type="button" onClick={() => setExpanded(open ? null : assignment.id)} className="flex min-w-0 flex-1 items-center justify-between gap-4 text-left"><span className="min-w-0"><span className="block truncate font-semibold text-[#324361]">{assignment.title}</span><span className="mt-0.5 block text-xs text-muted">{formatDate(assignment.dueDate)} · {assignment.submissions.length} submitted · {gradedCount} graded</span></span>{open ? <ChevronUp className="size-5 shrink-0 text-muted" /> : <ChevronDown className="size-5 shrink-0 text-muted" />}</button><button type="button" onClick={() => removeAssignment(assignment)} disabled={busy} aria-label={`Delete ${assignment.title}`} className="grid size-9 place-items-center rounded-lg text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 className="size-4" /></button></div>
-            {open ? <div className="border-t border-black/5 p-4 sm:p-5"><p className="whitespace-pre-wrap text-sm text-muted">{assignment.description || "No instructions provided."}</p><div className="mt-4 space-y-3">{assignment.submissions.length === 0 ? <p className="rounded-xl bg-surface/60 px-4 py-6 text-center text-sm text-muted">No submissions yet.</p> : assignment.submissions.map((submission) => <div key={submission.id} className="rounded-xl border border-black/8 p-4"><div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold text-brand-navy">{submission.student.name}</p><p className="text-xs text-muted">{submission.student.email} · {formatDate(submission.submittedAt)}</p></div><span className={`w-fit rounded-md px-2 py-1 text-[10px] font-semibold uppercase ${submission.status === "GRADED" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{submission.status}</span></div>{submission.content ? <p className="mt-3 whitespace-pre-wrap text-sm text-[#4f547b]">{submission.content}</p> : null}{submission.fileUrl ? <a href={submission.fileUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-brand-purple hover:text-brand-teal">Open attachment →</a> : null}<GradeForm submission={submission} onGraded={(graded) => updateSubmission(assignment.id, graded)} /></div>)}</div></div> : null}
+            <div className="flex items-center gap-2 px-4 py-4 sm:px-5"><button type="button" onClick={() => setExpanded(open ? null : assignment.id)} className="flex min-w-0 flex-1 items-center justify-between gap-4 text-left"><span className="min-w-0"><span className="block truncate font-semibold text-[#324361]">{assignment.title}</span><span className="mt-0.5 block text-xs text-muted">{formatDate(assignment.dueDate)} · {assignment.submissions.length} submitted · {gradedCount} graded</span></span>{open ? <ChevronUp className="size-5 shrink-0 text-muted" /> : <ChevronDown className="size-5 shrink-0 text-muted" />}</button><button type="button" onClick={() => { setExpanded(assignment.id); setEditing(assignment.id); }} disabled={busy || editing === assignment.id} aria-label={`Edit ${assignment.title}`} className="grid size-9 place-items-center rounded-lg text-brand-navy hover:bg-surface disabled:opacity-50"><Pencil className="size-4" /></button><button type="button" onClick={() => removeAssignment(assignment)} disabled={busy} aria-label={`Delete ${assignment.title}`} className="grid size-9 place-items-center rounded-lg text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 className="size-4" /></button></div>
+            {open ? <div className="border-t border-black/5 p-4 sm:p-5">{editing === assignment.id ? <AssignmentEditor assignment={assignment} onSaved={(details) => saveDetails(assignment.id, details)} onCancel={() => setEditing(null)} /> : <p className="whitespace-pre-wrap text-sm text-muted">{assignment.description || "No instructions provided."}</p>}<div className="mt-4 space-y-3">{assignment.submissions.length === 0 ? <p className="rounded-xl bg-surface/60 px-4 py-6 text-center text-sm text-muted">No submissions yet.</p> : assignment.submissions.map((submission) => <div key={submission.id} className="rounded-xl border border-black/8 p-4"><div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold text-brand-navy">{submission.student.name}</p><p className="text-xs text-muted">{submission.student.email} · {formatDate(submission.submittedAt)}</p></div><span className={`w-fit rounded-md px-2 py-1 text-[10px] font-semibold uppercase ${submission.status === "GRADED" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>{submission.status}</span></div>{submission.content ? <p className="mt-3 whitespace-pre-wrap text-sm text-[#4f547b]">{submission.content}</p> : null}{submission.fileUrl ? <a href={submission.fileUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-brand-purple hover:text-brand-teal">Open attachment →</a> : null}<GradeForm submission={submission} onGraded={(graded) => updateSubmission(assignment.id, graded)} /></div>)}</div></div> : null}
           </article>
         );
       })}

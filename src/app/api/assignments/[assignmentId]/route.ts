@@ -31,6 +31,9 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   const body = await request.json();
+  if (body.title !== undefined && !cleanString(body.title, 200)) {
+    return jsonError("title is required", 400);
+  }
   const dueDate = body.dueDate === null ? null : body.dueDate ? new Date(body.dueDate) : undefined;
   if (dueDate && Number.isNaN(dueDate.getTime())) return jsonError("Invalid dueDate", 400);
   const assignment = await prisma.assignment.update({

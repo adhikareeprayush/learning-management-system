@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Film, Plus, Save, Trash2, Upload } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Film, Plus, Save, Trash2, Upload } from "lucide-react";
 import { LessonResourceManager } from "@/components/course/lesson-resource-manager";
 import { FlashBanner } from "@/components/ui/flash-banner";
 
@@ -44,6 +44,10 @@ function normalizeLesson(lesson: AuthoringLesson): AuthoringLesson {
     content: lesson.content ?? "",
     videoUrl: lesson.videoUrl ?? "",
   };
+}
+
+function byOrder<T extends { order: number }>(a: T, b: T) {
+  return a.order - b.order;
 }
 
 export function LessonList({ course, initialModules, initialLessons }: LessonListProps) {
@@ -150,10 +154,19 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
     setBusy(`lesson-${lesson.id}`);
     setError(null);
     try {
+      // Position is left out on purpose: it only changes through the reorder endpoint.
       const data = await api<{ lesson: AuthoringLesson }>(`/api/lessons/${lesson.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(lesson),
+        body: JSON.stringify({
+          title: lesson.title,
+          moduleId: lesson.moduleId,
+          summary: lesson.summary,
+          content: lesson.content,
+          videoUrl: lesson.videoUrl,
+          duration: lesson.duration,
+          isFree: lesson.isFree,
+        }),
       });
       updateLesson(lesson.id, normalizeLesson(data.lesson));
       setFlash(`Lesson “${lesson.title}” saved.`);
@@ -275,14 +288,68 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
     }
   }
 
+  async function moveModule(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= modules.length) return;
+    const next = [...modules];
+    [next[index], next[target]] = [next[target]!, next[index]!];
+    setBusy(`module-${next[target]!.id}`);
+    setError(null);
+    try {
+      await api(`/api/courses/${course.id}/modules`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ moduleIds: next.map((item) => item.id) }),
+      });
+      setModules(next.map((item, order) => ({ ...item, order })));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not reorder modules");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function moveLesson(lesson: AuthoringLesson, direction: -1 | 1) {
+    const group = groups.find((item) => item.lessons.some((entry) => entry.id === lesson.id));
+    if (!group) return;
+    const index = group.lessons.findIndex((entry) => entry.id === lesson.id);
+    const target = index + direction;
+    if (target < 0 || target >= group.lessons.length) return;
+    const reordered = [...group.lessons];
+    [reordered[index], reordered[target]] = [reordered[target]!, reordered[index]!];
+    // Persist the whole curriculum in display order so stored order matches what students see.
+    const lessonIds = groups.flatMap((item) => (item.id === group.id ? reordered : item.lessons).map((entry) => entry.id));
+    setBusy(`lesson-${lesson.id}`);
+    setError(null);
+    try {
+      const data = await api<{ lessons: { id: string; order: number }[] }>(`/api/courses/${course.id}/lessons`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lessonIds }),
+      });
+      const orders = new Map(data.lessons.map((entry) => [entry.id, entry.order]));
+      setLessons((current) => current.map((entry) => ({ ...entry, order: orders.get(entry.id) ?? entry.order })));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not reorder lessons");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const moduleIds = new Set(modules.map((courseModule) => courseModule.id));
   const groups = [
     ...modules.map((courseModule) => ({
       id: courseModule.id,
       title: courseModule.title,
-      lessons: lessons.filter((lesson) => lesson.moduleId === courseModule.id),
+      lessons: lessons.filter((lesson) => lesson.moduleId === courseModule.id).sort(byOrder),
     })),
-    { id: "unassigned", title: "Unassigned lessons", lessons: lessons.filter((lesson) => !lesson.moduleId) },
+    {
+      id: "unassigned",
+      title: "Unassigned lessons",
+      lessons: lessons.filter((lesson) => !lesson.moduleId || !moduleIds.has(lesson.moduleId)).sort(byOrder),
+    },
   ].filter((group) => group.id !== "unassigned" || group.lessons.length > 0);
+  const lessonNumbers = new Map(groups.flatMap((group) => group.lessons).map((lesson, index) => [lesson.id, index + 1]));
 
   return (
     <div className="space-y-6">
@@ -294,12 +361,19 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
         <p className="mt-1 text-sm text-muted">Create sections that organize the lesson curriculum.</p>
         <form onSubmit={addModule} className="mt-4 flex flex-col gap-2 sm:flex-row">
           <input value={newModuleTitle} onChange={(event) => setNewModuleTitle(event.target.value)} placeholder="Module title" maxLength={160} className="min-w-0 flex-1 rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/30" />
-          <button disabled={busy !== null || !newModuleTitle.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#083f9b] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"><Plus className="size-4" /> Add module</button>
+          <button disabled={busy !== null || !newModuleTitle.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-blue px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"><Plus className="size-4" /> Add module</button>
         </form>
         {modules.length ? (
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            {modules.map((courseModule) => (
+            {modules.map((courseModule, moduleIndex) => (
               <div key={courseModule.id} className="rounded-xl border border-black/8 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-muted">Module {moduleIndex + 1}</span>
+                  <span className="flex gap-1">
+                    <button type="button" onClick={() => moveModule(moduleIndex, -1)} disabled={busy !== null || moduleIndex === 0} aria-label={`Move ${courseModule.title} up`} className="grid size-7 place-items-center rounded-lg text-brand-navy hover:bg-surface disabled:opacity-40"><ArrowUp className="size-3.5" /></button>
+                    <button type="button" onClick={() => moveModule(moduleIndex, 1)} disabled={busy !== null || moduleIndex === modules.length - 1} aria-label={`Move ${courseModule.title} down`} className="grid size-7 place-items-center rounded-lg text-brand-navy hover:bg-surface disabled:opacity-40"><ArrowDown className="size-3.5" /></button>
+                  </span>
+                </div>
                 <input value={courseModule.title} onChange={(event) => setModules((current) => current.map((item) => item.id === courseModule.id ? { ...item, title: event.target.value } : item))} className="w-full rounded-lg border border-black/8 px-3 py-2 font-medium outline-none focus:ring-2 focus:ring-brand-purple/20" />
                 <textarea value={courseModule.description} onChange={(event) => setModules((current) => current.map((item) => item.id === courseModule.id ? { ...item, description: event.target.value } : item))} placeholder="Optional module description" className="mt-2 min-h-16 w-full rounded-lg border border-black/8 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-purple/20" />
                 <div className="mt-2 flex justify-end gap-2">
@@ -328,14 +402,18 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
           {groups.map((group) => (
             <section key={group.id} className="space-y-2">
               <div className="flex items-center justify-between gap-3 px-1"><h2 className="font-display text-xl text-brand-navy">{group.title}</h2><span className="text-xs font-semibold text-muted">{group.lessons.length} lesson{group.lessons.length === 1 ? "" : "s"}</span></div>
-              {group.lessons.map((lesson) => {
+              {group.lessons.map((lesson, lessonIndex) => {
                 const isOpen = expanded === lesson.id;
                 return (
                   <article key={lesson.id} className="overflow-hidden rounded-2xl border border-black/5 bg-white">
-                    <button type="button" onClick={() => setExpanded(isOpen ? null : lesson.id)} className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left sm:px-5">
-                      <span className="min-w-0"><span className="block truncate font-semibold text-[#324361]">{lesson.order + 1}. {lesson.title}</span><span className="mt-0.5 block text-xs text-muted">{lesson.duration} min{lesson.videoUrl ? " · Video attached" : " · No video"}{lesson.isFree ? " · Free preview" : ""}</span></span>
-                      {isOpen ? <ChevronUp className="size-5 shrink-0 text-muted" /> : <ChevronDown className="size-5 shrink-0 text-muted" />}
-                    </button>
+                    <div className="flex items-center gap-1 pr-2 sm:pr-3">
+                      <button type="button" onClick={() => setExpanded(isOpen ? null : lesson.id)} className="flex min-w-0 flex-1 items-center justify-between gap-4 px-4 py-4 text-left sm:px-5">
+                        <span className="min-w-0"><span className="block truncate font-semibold text-[#324361]">{lessonNumbers.get(lesson.id)}. {lesson.title}</span><span className="mt-0.5 block text-xs text-muted">{lesson.duration} min{lesson.videoUrl ? " · Video attached" : " · No video"}{lesson.isFree ? " · Free preview" : ""}</span></span>
+                        {isOpen ? <ChevronUp className="size-5 shrink-0 text-muted" /> : <ChevronDown className="size-5 shrink-0 text-muted" />}
+                      </button>
+                      <button type="button" onClick={() => moveLesson(lesson, -1)} disabled={busy !== null || lessonIndex === 0} aria-label={`Move ${lesson.title} up`} className="grid size-8 shrink-0 place-items-center rounded-lg text-brand-navy hover:bg-surface disabled:opacity-40"><ArrowUp className="size-4" /></button>
+                      <button type="button" onClick={() => moveLesson(lesson, 1)} disabled={busy !== null || lessonIndex === group.lessons.length - 1} aria-label={`Move ${lesson.title} down`} className="grid size-8 shrink-0 place-items-center rounded-lg text-brand-navy hover:bg-surface disabled:opacity-40"><ArrowDown className="size-4" /></button>
+                    </div>
                     {isOpen ? (
                       <div className="grid gap-4 border-t border-black/5 p-4 sm:p-5 lg:grid-cols-2">
                         <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Title</span><input value={lesson.title} onChange={(event) => updateLesson(lesson.id, { title: event.target.value })} className="w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
@@ -364,7 +442,7 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
                         </div>
                         <label className="flex items-center gap-2 text-sm font-medium text-brand-navy"><input type="checkbox" checked={lesson.isFree} onChange={(event) => updateLesson(lesson.id, { isFree: event.target.checked })} className="size-4 accent-brand-purple" /> Allow free preview</label>
                         <LessonResourceManager lessonId={lesson.id} />
-                        <div className="flex justify-end gap-2 lg:col-span-2"><button type="button" onClick={() => removeLesson(lesson)} disabled={busy !== null} className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 className="size-4" /> Delete</button><button type="button" onClick={() => saveLesson(lesson)} disabled={busy !== null || !lesson.title.trim()} className="inline-flex items-center gap-1.5 rounded-xl bg-[#083f9b] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save className="size-4" /> {busy === `lesson-${lesson.id}` ? "Saving…" : "Save lesson"}</button></div>
+                        <div className="flex justify-end gap-2 lg:col-span-2"><button type="button" onClick={() => removeLesson(lesson)} disabled={busy !== null} className="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 className="size-4" /> Delete</button><button type="button" onClick={() => saveLesson(lesson)} disabled={busy !== null || !lesson.title.trim()} className="inline-flex items-center gap-1.5 rounded-xl bg-brand-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save className="size-4" /> {busy === `lesson-${lesson.id}` ? "Saving…" : "Save lesson"}</button></div>
                       </div>
                     ) : null}
                   </article>

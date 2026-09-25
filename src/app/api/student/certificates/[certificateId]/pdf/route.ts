@@ -9,7 +9,7 @@ type Params = { params: Promise<{ certificateId: string }> };
 
 export const runtime = "nodejs";
 
-export async function GET(_request: Request, { params }: Params) {
+export async function GET(request: Request, { params }: Params) {
   const tenant = await requireTenantApi();
   if (tenant instanceof Response) return tenant;
 
@@ -49,10 +49,15 @@ export async function GET(_request: Request, { params }: Params) {
 
   const filename = certificatePdfFilename(certificate.course.title);
 
+  const disposition =
+    new URL(request.url).searchParams.get("inline") === "1"
+      ? "inline"
+      : "attachment";
+
   return new Response(Buffer.from(pdfBytes), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": `${disposition}; filename="${filename}"`,
       "Cache-Control": "no-store",
     },
   });

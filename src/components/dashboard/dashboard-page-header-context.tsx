@@ -55,21 +55,19 @@ export function useDashboardPageHeader() {
 }
 
 /** Pages call this to set the shared chrome title without remounting the toolbar. */
-export function useRegisterDashboardPageHeader(
-  page: DashboardPageHeaderState,
-) {
+export function useRegisterDashboardPageHeader({
+  title,
+  subtitle,
+  backHref,
+  backLabel,
+  status,
+}: DashboardPageHeaderState) {
   const { setState } = useDashboardPageHeader();
 
+  // Depend on the fields, not the object: callers build a new one every render.
   useEffect(() => {
-    setState(page);
-  }, [
-    page.title,
-    page.subtitle,
-    page.backHref,
-    page.backLabel,
-    page.status,
-    setState,
-  ]);
+    setState({ title, subtitle, backHref, backLabel, status });
+  }, [title, subtitle, backHref, backLabel, status, setState]);
 
   useEffect(() => {
     return () => setState(defaultState);

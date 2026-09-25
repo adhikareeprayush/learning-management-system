@@ -1,5 +1,5 @@
 import { getAdminDashboardData } from "@/lib/dashboard-data";
-import { jsonError, requireOrgAdminApi } from "@/lib/api";
+import { requireOrgAdminApi } from "@/lib/api";
 
 export async function GET() {
   const auth = await requireOrgAdminApi();

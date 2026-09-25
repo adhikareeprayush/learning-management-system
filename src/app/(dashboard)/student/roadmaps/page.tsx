@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, Award, Map, Route } from "lucide-react";
@@ -5,23 +6,17 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { ProgressBar } from "@/components/dashboard/progress-bar";
 import { getServerSession } from "@/lib/auth";
 import { formatLevel, listPublishedRoadmaps } from "@/lib/roadmaps";
-import { prisma } from "@/lib/db";
+import { requireTenantContext } from "@/lib/tenant";
 
 export default async function StudentRoadmapsPage() {
   const session = await getServerSession();
   if (!session) redirect("/login");
 
-  const [all, enrollments] = await Promise.all([
-    listPublishedRoadmaps(session.user.id),
-    prisma.roadmapEnrollment.findMany({
-      where: { studentId: session.user.id },
-      select: { roadmapId: true },
-    }),
-  ]);
+  const ctx = await requireTenantContext();
+  const all = await listPublishedRoadmaps(ctx.organizationId, session.user.id);
 
-  const enrolledIds = new Set(enrollments.map((e) => e.roadmapId));
-  const mine = all.filter((r) => enrolledIds.has(r.id));
-  const browse = all.filter((r) => !enrolledIds.has(r.id));
+  const mine = all.filter((r) => r.enrolled);
+  const browse = all.filter((r) => !r.enrolled);
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -56,7 +51,7 @@ export default async function StudentRoadmapsPage() {
           </p>
           <Link
             href="/roadmaps"
-            className="mt-4 inline-flex rounded-xl bg-[#083f9b] px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-purple"
+            className="mt-4 inline-flex rounded-xl bg-brand-blue px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-purple"
           >
             Explore roadmaps
           </Link>
@@ -70,9 +65,11 @@ export default async function StudentRoadmapsPage() {
               className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition hover:border-brand-purple/25 sm:p-5"
             >
               <div className="flex gap-4">
-                <img
+                <Image
                   src={roadmap.thumbnail}
                   alt=""
+                  width={80}
+                  height={80}
                   className="size-16 shrink-0 rounded-xl object-cover sm:size-20"
                 />
                 <div className="min-w-0 flex-1">
@@ -112,9 +109,11 @@ export default async function StudentRoadmapsPage() {
                   href={`/roadmaps/${roadmap.slug}`}
                   className="flex items-center gap-3 px-4 py-3 transition hover:bg-surface sm:px-5"
                 >
-                  <img
+                  <Image
                     src={roadmap.thumbnail}
                     alt=""
+                    width={48}
+                    height={48}
                     className="size-12 rounded-lg object-cover"
                   />
                   <div className="min-w-0 flex-1">

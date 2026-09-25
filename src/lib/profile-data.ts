@@ -37,16 +37,30 @@ export function parseExtendedProfile(preferences: unknown): ExtendedProfileField
   };
 }
 
+/**
+ * Applies extended-profile edits onto the raw preferences JSON (which also holds
+ * settings toggles). A non-empty string sets a field; an empty string or null
+ * removes it; undefined leaves it untouched.
+ */
 export function mergeExtendedProfile(
   preferences: unknown,
-  fields: Partial<ExtendedProfileFields>,
+  fields: Partial<Record<keyof ExtendedProfileFields, string | null | undefined>>,
 ): Record<string, unknown> {
   const base =
     preferences && typeof preferences === "object" && !Array.isArray(preferences)
       ? { ...(preferences as Record<string, unknown>) }
       : {};
-  const current = parseExtendedProfile(base);
-  base.profile = { ...current, ...fields };
+  const existing = base.profile;
+  const profile: Record<string, unknown> =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
+    if (value) profile[key] = value;
+    else delete profile[key];
+  }
+  base.profile = profile;
   return base;
 }
 

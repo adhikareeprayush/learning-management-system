@@ -1,7 +1,9 @@
+import Image from "next/image";
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import {
   ArrowRight,
+  Award,
   CheckCircle2,
   Circle,
   Clock3,
@@ -24,7 +26,8 @@ export default async function StudentCoursePage({ params }: Props) {
 
   const { courseId } = await params;
   const course = await getEnrolledStudentCourse(session.user.id, courseId);
-  if (!course) notFound();
+  // Not enrolled (or unknown course): the public page handles enroll/checkout.
+  if (!course) redirect(`/courses/${encodeURIComponent(courseId)}`);
 
   const lessons = flatLessonsFromCourse(course);
   const next = lessons.find((l) => !l.completed) ?? lessons[0];
@@ -39,9 +42,11 @@ export default async function StudentCoursePage({ params }: Props) {
       />
 
       <div className="flex flex-col gap-4 rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:flex-row sm:items-center sm:p-5">
-        <img
+        <Image
           src={course.image}
           alt=""
+          width={352}
+          height={224}
           className="aspect-video w-full rounded-xl object-cover sm:aspect-auto sm:h-28 sm:w-44 sm:shrink-0"
         />
         <div className="min-w-0 flex-1">
@@ -53,7 +58,7 @@ export default async function StudentCoursePage({ params }: Props) {
         {next ? (
           <Link
             href={`/student/courses/${course.slug}/lessons/${next.id}`}
-            className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#083f9b] px-5 text-sm font-semibold text-white transition hover:bg-brand-purple"
+            className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-brand-blue px-5 text-sm font-semibold text-white transition hover:bg-brand-purple"
           >
             <Play className="size-4 fill-current" />
             {course.progress > 0 ? "Continue learning" : "Start course"}
@@ -140,10 +145,17 @@ export default async function StudentCoursePage({ params }: Props) {
       </div>
 
       {course.progress >= 100 ? (
-        <div className="rounded-2xl border border-brand-teal/20 bg-[#e8faf6] px-4 py-4 sm:px-5">
+        <div className="flex flex-col gap-3 rounded-2xl border border-brand-teal/20 bg-[#e8faf6] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <p className="text-sm font-semibold text-brand-navy">
             You finished this course — share your experience below.
           </p>
+          <Link
+            href="/student/certificates"
+            className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-brand-teal px-4 text-sm font-semibold text-white transition hover:brightness-110"
+          >
+            <Award className="size-4" />
+            View certificate
+          </Link>
         </div>
       ) : null}
 

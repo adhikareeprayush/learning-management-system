@@ -1,17 +1,18 @@
-import { prisma } from "@/lib/db";
+import { redirect } from "next/navigation";
+import { listNewsletterCampaigns, listNewsletterSubscribers } from "@/lib/newsletter";
+import { requireAdminPage } from "@/lib/page-guards";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
 import AdminNewsletterClient from "./newsletter-client";
 
 export default async function AdminNewsletterPage() {
+  await requireAdminPage();
+
+  const ctx = await resolveTenantFromHeaders();
+  if (!ctx) redirect("/login");
+
   const [subscribers, campaigns] = await Promise.all([
-    prisma.newsletterSubscriber.findMany({
-      orderBy: { subscribedAt: "desc" },
-    }),
-    prisma.newsletterCampaign.findMany({
-      orderBy: { createdAt: "desc" },
-      include: {
-        createdBy: { select: { id: true, name: true, email: true } },
-      },
-    }),
+    listNewsletterSubscribers(ctx.organizationId),
+    listNewsletterCampaigns(ctx.organizationId),
   ]);
 
   return (

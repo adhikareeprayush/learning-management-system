@@ -21,14 +21,11 @@ export async function uploadToLocalDisk(file: File, folder: string): Promise<Upl
   await fs.writeFile(absolutePath, buffer);
 
   const publicPath = `/uploads/${sanitizedFolder}/${fileName}`.replace(/\/+/g, "/");
-  const baseUrl =
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    process.env.BETTER_AUTH_URL?.trim() ||
-    "http://localhost:3005";
 
+  // Relative so next/image treats it as a local asset (remotePatterns only allows ImageKit).
   return {
     provider: "local",
-    url: `${baseUrl.replace(/\/$/, "")}${publicPath}`,
+    url: publicPath,
     fileId: publicPath,
     name: fileName,
   };

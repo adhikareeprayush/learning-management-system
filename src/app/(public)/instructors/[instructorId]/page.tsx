@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { BookOpen, Users } from "lucide-react";
 import { notFound } from "next/navigation";
@@ -5,12 +6,9 @@ import { Button } from "@/components/ui/button";
 import { getInstructorProfile } from "@/lib/dashboard-data";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
+import { formatCoursePrice } from "@/lib/pricing";
 
 type Props = { params: Promise<{ instructorId: string }> };
-
-function formatPrice(cents: number) {
-  return `$${(cents / 100).toFixed(2)}`;
-}
 
 export default async function InstructorProfilePage({ params }: Props) {
   const { instructorId } = await params;
@@ -27,9 +25,11 @@ export default async function InstructorProfilePage({ params }: Props) {
       <section className="border-b border-black/5 bg-white">
         <div className="mx-auto flex max-w-[1440px] flex-col items-center gap-6 px-5 py-12 text-center md:flex-row md:px-10 md:text-left lg:px-16 lg:py-16">
           {instructor.image ? (
-            <img
+            <Image
               src={instructor.image}
               alt=""
+              width={128}
+              height={128}
               className="size-28 rounded-full object-cover ring-4 ring-surface sm:size-32"
             />
           ) : (
@@ -81,11 +81,15 @@ export default async function InstructorProfilePage({ params }: Props) {
                 href={`/courses/${course.slug}`}
                 className="overflow-hidden rounded-2xl border border-black/5 bg-white transition hover:shadow-md"
               >
-                <img
-                  src={resolveMediaUrl(course.thumbnail)}
-                  alt=""
-                  className="aspect-video w-full object-cover"
-                />
+                <div className="relative aspect-video w-full overflow-hidden">
+                  <Image
+                    src={resolveMediaUrl(course.thumbnail)}
+                    alt=""
+                    fill
+                    sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                    className="object-cover"
+                  />
+                </div>
                 <div className="p-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-brand-teal">
                     {course.category ?? "Course"}
@@ -95,7 +99,7 @@ export default async function InstructorProfilePage({ params }: Props) {
                   </h3>
                   <div className="mt-3 flex items-center justify-between text-sm">
                     <span className="font-semibold text-brand-navy">
-                      {formatPrice(course.price)}
+                      {formatCoursePrice(course)}
                     </span>
                     <span className="inline-flex items-center gap-1 text-muted">
                       <Users className="size-3.5" />

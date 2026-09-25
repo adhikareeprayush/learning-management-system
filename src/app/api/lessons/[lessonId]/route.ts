@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { cleanString, finiteNumber, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import { findManagedCourse, syncCourseDuration } from "@/lib/course-access";
 import { maybeIssueCertificate } from "@/lib/certificates";
+import { redactResourceForLearner } from "@/lib/lesson-resources";
+import { resolveLearnerMember } from "@/lib/membership";
 
 type Params = { params: Promise<{ lessonId: string }> };
 
@@ -78,7 +80,9 @@ export async function GET(_request: Request, { params }: Params) {
         duration: lesson.duration,
         order: lesson.order,
         course: lesson.course,
-        resources: lesson.resources,
+        resources: canManage
+          ? lesson.resources
+          : lesson.resources.map(redactResourceForLearner),
         completed: progress?.completed ?? false,
       },
     });
@@ -150,7 +154,12 @@ export async function PATCH(request: Request, { params }: Params) {
       return NextResponse.json({ lesson: updated });
     }
 
-    if (tenant.member?.role !== "STUDENT") return jsonError("Forbidden", 403);
+    const learner = await resolveLearnerMember(
+      tenant.organizationId,
+      session.user,
+      tenant.member,
+    );
+    if (learner?.role !== "STUDENT") return jsonError("Forbidden", 403);
     const completed = Boolean(body.completed);
     const enrollment = await prisma.enrollment.findUnique({
       where: {

@@ -4,24 +4,25 @@ import {
   Flame,
   ListChecks,
   TrendingUp,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 
 const tones = {
   purple: {
-    icon: "bg-[#7f56d9]/12 text-brand-purple",
+    icon: "bg-brand-purple/12 text-brand-purple",
     delta: "text-brand-purple",
   },
   teal: {
-    icon: "bg-[#2aaa94]/12 text-brand-teal",
+    icon: "bg-brand-teal/12 text-brand-teal",
     delta: "text-brand-teal",
   },
   navy: {
-    icon: "bg-[#04016c]/10 text-brand-navy",
+    icon: "bg-brand-navy/10 text-brand-navy",
     delta: "text-brand-navy",
   },
   mint: {
-    icon: "bg-[#4be5ca]/20 text-[#0d8f7a]",
+    icon: "bg-brand-mint/20 text-[#0d8f7a]",
     delta: "text-[#0d8f7a]",
   },
 } as const;
@@ -31,6 +32,7 @@ const icons: Record<string, LucideIcon> = {
   completed: TrendingUp,
   hours: Clock3,
   due: ListChecks,
+  revenue: Wallet,
 };
 
 type StatsCardProps = {

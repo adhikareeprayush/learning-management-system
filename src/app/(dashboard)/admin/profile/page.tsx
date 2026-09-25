@@ -1,6 +1,8 @@
 import { ProfilePageContent } from "@/components/profile/profile-page-content";
+import { requireAdminPage } from "@/lib/page-guards";
 
-export default function AdminProfilePage() {
+export default async function AdminProfilePage() {
+  await requireAdminPage();
   return (
     <ProfilePageContent
       title="Profile"

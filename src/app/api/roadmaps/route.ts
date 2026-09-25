@@ -1,4 +1,4 @@
-import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import { requireSession, requireTenantApi } from "@/lib/api";
 import { listPublishedRoadmaps } from "@/lib/roadmaps";
 
 export async function GET() {

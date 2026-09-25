@@ -1,9 +1,11 @@
 import { Suspense } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, BookOpen, Sparkles, Users } from "lucide-react";
 import { CoursesCatalog } from "@/components/course/courses-catalog";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
+import { formatCoursePrice } from "@/lib/pricing";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 
 export default async function CoursesPage() {
@@ -35,6 +37,7 @@ export default async function CoursesPage() {
         slug: true,
         title: true,
         price: true,
+        priceNpr: true,
         thumbnail: true,
       },
     }),
@@ -88,9 +91,11 @@ export default async function CoursesPage() {
                   href={`/courses/${course.slug}`}
                   className="group flex w-[min(85vw,300px)] shrink-0 snap-start items-center gap-3 rounded-2xl border border-white/15 bg-white/10 p-3 backdrop-blur-md transition hover:bg-white/15 sm:w-[min(70vw,280px)] lg:w-auto lg:shrink"
                 >
-                  <img
+                  <Image
                     src={resolveMediaUrl(course.thumbnail)}
                     alt=""
+                    width={64}
+                    height={64}
                     className="size-14 shrink-0 rounded-xl object-cover sm:size-16"
                   />
                   <div className="min-w-0 flex-1">
@@ -101,7 +106,7 @@ export default async function CoursesPage() {
                       {course.title}
                     </p>
                     <p className="mt-0.5 text-xs text-white/70">
-                      ${(course.price / 100).toFixed(2)}
+                      {formatCoursePrice(course)}
                     </p>
                   </div>
                   <ArrowRight className="hidden size-4 shrink-0 text-white/50 opacity-0 transition group-hover:opacity-100 sm:block" />

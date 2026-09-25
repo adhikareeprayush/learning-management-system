@@ -9,9 +9,9 @@ import { UserAvatar } from "@/components/ui/user-avatar";
 import { authClient } from "@/lib/auth-client";
 import {
   dashboardHomeHref,
+  dashboardRoleForUser,
   profileHref,
-  type DashboardRole,
-} from "@/lib/mock-dashboard-chrome";
+} from "@/lib/nav";
 
 type SessionUser = {
   name: string;
@@ -19,12 +19,6 @@ type SessionUser = {
   image?: string | null;
   role?: string;
 };
-
-function roleToDashboardRole(role: string | undefined): DashboardRole {
-  if (role === "ADMIN" || role === "ORG_ADMIN") return "admin";
-  if (role === "INSTRUCTOR") return "instructor";
-  return "student";
-}
 
 function GuestAuthLinks() {
   return (
@@ -103,7 +97,7 @@ export function NavbarAuth() {
     return <GuestAuthLinks />;
   }
 
-  const dashboardRole = roleToDashboardRole(user.role);
+  const dashboardRole = dashboardRoleForUser(user.role);
 
   return (
     <div ref={ref} className="relative">
@@ -215,7 +209,7 @@ export function MobileNavbarAuth({ onNavigate }: { onNavigate?: () => void }) {
     );
   }
 
-  const dashboardRole = roleToDashboardRole(user.role);
+  const dashboardRole = dashboardRoleForUser(user.role);
 
   return (
     <div className="mt-4 space-y-3 border-t border-black/5 pt-4">

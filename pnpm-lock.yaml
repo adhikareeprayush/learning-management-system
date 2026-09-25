@@ -8,12 +8,21 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/cormorant-garamond':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/rowdies':
         specifier: ^5.2.5
         version: 5.3.0
       '@fontsource/saira':
         specifier: ^5.2.5
         version: 5.3.0
+      '@fontsource/sora':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@pdf-lib/fontkit':
+        specifier: ^1.1.1
+        version: 1.1.1
       '@prisma/adapter-pg':
         specifier: ^7.9.0
         version: 7.9.0
@@ -473,11 +482,17 @@ packages:
     resolution: {integrity: sha512-43/qtrDUokr7LJqoF2c3+RInu/t4zfrpYdoSDfYyhg52rwLV6TnOvdG4fXm7IkSB3wErkcmJS9iEhjVtOSEjjA==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
 
+  '@fontsource/cormorant-garamond@5.3.0':
+    resolution: {integrity: sha512-weuGsCirGVWBWqpt6YUp0yLThTe4G8YO45noq8wxeJCRvEpq5lFrxNMFSTxcyOyV5k5otzJ8guDzYegdYlcLMQ==}
+
   '@fontsource/rowdies@5.3.0':
     resolution: {integrity: sha512-K6HnzUz+mBB4C1qb2rHCVgqp0jiFUdJF80aVASRXe7M2hJ0uIw6XydbsuYNx7k+8d/7n8foKo1cXsI8I4ArNWQ==}
 
   '@fontsource/saira@5.3.0':
     resolution: {integrity: sha512-Sbc9SUZsXjULjzjDbBYicL+gQSdLlqwEiyHi6Gs5R9PSsdUWTmTa77jH1a8MalWWHafoq6SK/G3ovyIbGEN5Ww==}
+
+  '@fontsource/sora@5.3.0':
+    resolution: {integrity: sha512-SqW3OpKxxfKvxDLPlbdrWf2KooPfbd+W3jaYn483o+Y/JrmU87vjFPNptDqwP428c3vY+gnranLhjcbRaXB0Jw==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -764,6 +779,9 @@ packages:
   '@opentelemetry/semantic-conventions@1.43.0':
     resolution: {integrity: sha512-eSYWTm620tTk45EKSedaUL8MFYI8hW164hIXsgIHyxu3VobUB3fFCu5t0hQby6OoWRPsG1KkKUG2M5UadiLiVg==}
     engines: {node: '>=14'}
+
+  '@pdf-lib/fontkit@1.1.1':
+    resolution: {integrity: sha512-KjMd7grNapIWS/Dm0gvfHEilSyAmeLvrEGVcqLGi0VYebuqqzTbgF29efCx7tvx+IEbG3zQciRSWl3GkUSvjZg==}
 
   '@pdf-lib/standard-fonts@1.0.0':
     resolution: {integrity: sha512-hU30BK9IUN/su0Mn9VdlVKsWBS6GyhVfqjwl1FjZN4TxP6cCw0jP2w7V3Hf5uX7M0AZJ16vey9yE0ny7Sa59ZA==}
@@ -3548,9 +3566,13 @@ snapshots:
       '@eslint/core': 0.17.0
       levn: 0.4.1
 
+  '@fontsource/cormorant-garamond@5.3.0': {}
+
   '@fontsource/rowdies@5.3.0': {}
 
   '@fontsource/saira@5.3.0': {}
+
+  '@fontsource/sora@5.3.0': {}
 
   '@humanfs/core@0.19.2':
     dependencies:
@@ -3778,6 +3800,10 @@ snapshots:
   '@nolyfill/is-core-module@1.0.39': {}
 
   '@opentelemetry/semantic-conventions@1.43.0': {}
+
+  '@pdf-lib/fontkit@1.1.1':
+    dependencies:
+      pako: 1.0.11
 
   '@pdf-lib/standard-fonts@1.0.0':
     dependencies:

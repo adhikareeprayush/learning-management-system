@@ -1,10 +1,10 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { Users } from "lucide-react";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { ProgressBar } from "@/components/dashboard/progress-bar";
 import { UserAvatar } from "@/components/ui/user-avatar";
-import { getServerSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { requireInstructorPage } from "@/lib/page-guards";
 
 const enrollmentDateFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
@@ -24,8 +24,7 @@ function normalizeProgress(progress: number) {
 type Props = { params: Promise<{ courseId: string }> };
 
 export default async function InstructorCourseStudentsPage({ params }: Props) {
-  const session = await getServerSession();
-  if (!session) redirect("/login");
+  const session = await requireInstructorPage();
 
   const { courseId } = await params;
   const course = await prisma.course.findFirst({

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { cleanString, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
 import { findManagedCourse } from "@/lib/course-access";
-import { isOrgAdmin, isOrgTeacher } from "@/lib/tenant";
+import { isOrgAdmin } from "@/lib/tenant";
 
 export async function GET(request: Request) {
   const tenant = await requireTenantApi();
@@ -11,20 +11,21 @@ export async function GET(request: Request) {
   if (!session) return jsonError("Unauthorized", 401);
 
   const courseId = new URL(request.url).searchParams.get("courseId") || undefined;
-  const isStudent = tenant.member?.role === "STUDENT";
-  const isInstructorOnly =
-    isOrgTeacher(tenant.member) && !isOrgAdmin(tenant.member);
+  const isAdmin = session.user.role === "ADMIN" || isOrgAdmin(tenant.member);
+  const isStudent = !isAdmin && tenant.member?.role === "STUDENT";
+  const isInstructor = !isAdmin && !isStudent && isTeacher(session, tenant.member);
+  if (!isAdmin && !isStudent && !isInstructor) return jsonError("Forbidden", 403);
 
   const assignments = await prisma.assignment.findMany({
     where: {
       ...(courseId ? { courseId } : {}),
       course: {
         organizationId: tenant.organizationId,
-        ...(isStudent
-          ? { enrollments: { some: { studentId: session.user.id } } }
-          : isInstructorOnly
-            ? { instructorId: session.user.id }
-            : {}),
+        ...(isAdmin
+          ? {}
+          : isStudent
+            ? { enrollments: { some: { studentId: session.user.id } } }
+            : { instructorId: session.user.id }),
       },
     },
     orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }],

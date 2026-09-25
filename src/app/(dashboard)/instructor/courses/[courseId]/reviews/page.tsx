@@ -1,16 +1,15 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { Star } from "lucide-react";
 import { CourseReviews } from "@/components/course/course-reviews";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
-import { getServerSession } from "@/lib/auth";
 import { getCourseReviewsBundle } from "@/lib/course-reviews";
 import { prisma } from "@/lib/db";
+import { requireInstructorPage } from "@/lib/page-guards";
 
 type Props = { params: Promise<{ courseId: string }> };
 
 export default async function InstructorCourseReviewsPage({ params }: Props) {
-  const session = await getServerSession();
-  if (!session) redirect("/login");
+  const session = await requireInstructorPage();
 
   const { courseId } = await params;
   const course = await prisma.course.findFirst({

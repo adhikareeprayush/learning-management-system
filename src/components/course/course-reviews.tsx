@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Star, Trash2 } from "lucide-react";
 import { FlashBanner } from "@/components/ui/flash-banner";
 import { Button } from "@/components/ui/button";
@@ -87,28 +87,30 @@ export function CourseReviews({
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const loadReviews = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/courses/${courseId}/reviews`, {
-        cache: "no-store",
-      });
-      if (res.ok) {
-        const data = (await res.json()) as CourseReviewsBundle;
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/courses/${courseId}/reviews`, { cache: "no-store" })
+      .then(async (res) =>
+        res.ok ? ((await res.json()) as CourseReviewsBundle) : null,
+      )
+      .then((data) => {
+        if (cancelled || !data) return;
         setBundle(data);
         if (data.userReview) {
           setRating(data.userReview.rating);
           setComment(data.userReview.comment ?? "");
         }
-      }
-    } finally {
-      setLoading(false);
-    }
+      })
+      .catch(() => {
+        // Reviews are non-critical; the empty state covers a failed load.
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [courseId]);
-
-  useEffect(() => {
-    void loadReviews();
-  }, [loadReviews]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -258,7 +260,7 @@ export function CourseReviews({
             placeholder="What did you learn? Was the pacing right? Would you recommend it?"
             className="mt-3 min-h-24 w-full rounded-xl border border-black/10 bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-purple/30"
           />
-          <Button submit disabled={submitting} className="mt-3">
+          <Button submit loading={submitting} className="mt-3">
             {submitting
               ? "Saving…"
               : userReview

@@ -1,10 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Award, Download, Loader2, Route } from "lucide-react";
+import { Award, Download, Eye, Loader2, Route } from "lucide-react";
 import { CertificatePreview } from "@/components/certificate/certificate-preview";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { FlashBanner } from "@/components/ui/flash-banner";
+import {
+  courseCertificateContent,
+  roadmapCertificateContent,
+} from "@/lib/certificate-design";
 
 type CourseCertificateItem = {
   kind: "course";
@@ -34,6 +38,27 @@ type RoadmapCertificateItem = {
 
 type CertificateItem = CourseCertificateItem | RoadmapCertificateItem;
 
+function certificateContent(cert: CertificateItem, studentName: string) {
+  const shared = {
+    studentName,
+    credentialId: cert.credentialId,
+    issuedAt: cert.issuedAt,
+  };
+  return cert.kind === "course"
+    ? courseCertificateContent({
+        ...shared,
+        courseTitle: cert.course.title,
+        instructorName: cert.course.instructor.name,
+        category: cert.course.category,
+      })
+    : roadmapCertificateContent({
+        ...shared,
+        roadmapTitle: cert.roadmap.title,
+        courseCount: cert.roadmap.courseCount,
+        category: cert.roadmap.category,
+      });
+}
+
 function slugFilename(title: string) {
   const slug = title
     .toLowerCase()
@@ -42,12 +67,14 @@ function slugFilename(title: string) {
   return `${slug || "course"}-certificate.pdf`;
 }
 
+function pdfPath(cert: CertificateItem) {
+  return cert.kind === "roadmap"
+    ? `/api/student/certificates/roadmap/${cert.id}/pdf`
+    : `/api/student/certificates/${cert.id}/pdf`;
+}
+
 async function downloadFromServer(cert: CertificateItem, filename: string) {
-  const urlPath =
-    cert.kind === "roadmap"
-      ? `/api/student/certificates/roadmap/${cert.id}/pdf`
-      : `/api/student/certificates/${cert.id}/pdf`;
-  const response = await fetch(`${urlPath}?t=${Date.now()}`, {
+  const response = await fetch(`${pdfPath(cert)}?t=${Date.now()}`, {
     cache: "no-store",
   });
   if (!response.ok) {
@@ -55,7 +82,7 @@ async function downloadFromServer(cert: CertificateItem, filename: string) {
       error?: string;
     };
     throw new Error(
-      data.error || `Download failed (${response.status}). Restart the dev server and try again.`,
+      data.error || `Download failed (${response.status}). Please try again.`,
     );
   }
   const blob = await response.blob();
@@ -182,29 +209,12 @@ export function CertificatesWorkspace({
           {certificates.map((cert) => (
             <article
               key={`${cert.kind}-${cert.id}`}
-              className="rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]"
+              className="overflow-hidden rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]"
             >
-              {cert.kind === "course" ? (
-                <CertificatePreview
-                  data-certificate-id={cert.id}
-                  studentName={studentName}
-                  courseTitle={cert.course.title}
-                  instructorName={cert.course.instructor.name}
-                  category={cert.course.category}
-                  issuedAt={cert.issuedAt}
-                  credentialId={cert.credentialId}
-                />
-              ) : (
-                <CertificatePreview
-                  data-certificate-id={cert.id}
-                  studentName={studentName}
-                  courseTitle={cert.roadmap.title}
-                  instructorName={`Roadmap · ${cert.roadmap.courseCount} courses`}
-                  category={cert.roadmap.category ?? "Learning path"}
-                  issuedAt={cert.issuedAt}
-                  credentialId={cert.credentialId}
-                />
-              )}
+              <CertificatePreview
+                data-certificate-id={cert.id}
+                content={certificateContent(cert, studentName)}
+              />
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/5 px-4 py-3 sm:px-5">
                 <div className="min-w-0">
                   <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-[#324361]">
@@ -226,22 +236,42 @@ export function CertificatesWorkspace({
                       month: "short",
                       day: "numeric",
                       year: "numeric",
-                    })}
+                    })}{" "}
+                    ·{" "}
+                    <a
+                      href={`/verify/${encodeURIComponent(cert.credentialId)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold text-brand-purple hover:text-brand-teal"
+                    >
+                      Public verification
+                    </a>
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => downloadPdf(cert)}
-                  disabled={downloadingId === cert.id}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#083f9b] px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-purple disabled:opacity-60"
-                >
-                  {downloadingId === cert.id ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <Download className="size-3.5" />
-                  )}
-                  {downloadingId === cert.id ? "Generating…" : "Download PDF"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`${pdfPath(cert)}?inline=1`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-xs font-semibold text-[#324361] transition hover:border-brand-blue hover:text-brand-blue"
+                  >
+                    <Eye className="size-3.5" />
+                    View
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => downloadPdf(cert)}
+                    disabled={downloadingId === cert.id}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-brand-blue px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand-purple disabled:opacity-60"
+                  >
+                    {downloadingId === cert.id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Download className="size-3.5" />
+                    )}
+                    {downloadingId === cert.id ? "Generating…" : "Download PDF"}
+                  </button>
+                </div>
               </div>
             </article>
           ))}

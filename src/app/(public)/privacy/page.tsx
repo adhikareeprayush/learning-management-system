@@ -10,7 +10,7 @@ export default function PrivacyPage() {
       />
       <div className="mx-auto max-w-3xl space-y-4 px-5 py-14 text-muted md:px-10">
         <p>
-          Edujarr stores account information (name, email), learning progress,
+          Convolution LMS stores account information (name, email), learning progress,
           enrollments, reviews, and newsletter signups in a PostgreSQL database
           for the demo.
         </p>

@@ -3,6 +3,10 @@ import { prisma } from "@/lib/db";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const campaignInclude = {
+  createdBy: { select: { id: true, name: true, email: true } },
+} as const;
+
 export function isValidNewsletterEmail(email: string) {
   return EMAIL_RE.test(email);
 }
@@ -99,10 +103,27 @@ export async function listNewsletterCampaigns(organizationId: string) {
   return prisma.newsletterCampaign.findMany({
     where: { organizationId },
     orderBy: { createdAt: "desc" },
-    include: {
-      createdBy: { select: { id: true, name: true, email: true } },
-    },
+    include: campaignInclude,
   });
+}
+
+const SUBJECT_MAX = 200;
+const BODY_MAX = 50_000;
+
+function validateCampaignFields(fields: { subject?: string; body?: string }) {
+  if (fields.subject !== undefined) {
+    if (!fields.subject) return "Subject is required";
+    if (fields.subject.length > SUBJECT_MAX) {
+      return `Subject must be ${SUBJECT_MAX} characters or fewer`;
+    }
+  }
+  if (fields.body !== undefined) {
+    if (!fields.body) return "Message body is required";
+    if (fields.body.length > BODY_MAX) {
+      return `Message body must be ${BODY_MAX.toLocaleString()} characters or fewer`;
+    }
+  }
+  return null;
 }
 
 export async function createNewsletterCampaign(input: {
@@ -114,12 +135,8 @@ export async function createNewsletterCampaign(input: {
   const subject = input.subject.trim();
   const body = input.body.trim();
 
-  if (!subject) {
-    return { ok: false as const, error: "Subject is required", status: 400 };
-  }
-  if (!body) {
-    return { ok: false as const, error: "Message body is required", status: 400 };
-  }
+  const invalid = validateCampaignFields({ subject, body });
+  if (invalid) return { ok: false as const, error: invalid, status: 400 };
 
   const campaign = await prisma.newsletterCampaign.create({
     data: {
@@ -128,42 +145,86 @@ export async function createNewsletterCampaign(input: {
       body,
       createdById: input.createdById,
     },
-    include: {
-      createdBy: { select: { id: true, name: true, email: true } },
-    },
+    include: campaignInclude,
   });
 
   return { ok: true as const, campaign };
 }
 
-export async function sendNewsletterCampaign(organizationId: string, campaignId: string) {
-  const campaign = await prisma.newsletterCampaign.findFirst({
+/** Distinguishes "no such campaign" from "not a draft any more" after a guarded write matched nothing. */
+async function draftGuardFailure(organizationId: string, campaignId: string) {
+  const exists = await prisma.newsletterCampaign.findFirst({
     where: { id: campaignId, organizationId },
+    select: { id: true },
   });
+  return exists
+    ? { ok: false as const, error: "Only draft campaigns can be changed", status: 409 }
+    : { ok: false as const, error: "Campaign not found", status: 404 };
+}
 
-  if (!campaign) {
-    return { ok: false as const, error: "Campaign not found", status: 404 };
+export async function updateNewsletterCampaign(
+  organizationId: string,
+  campaignId: string,
+  input: { subject?: string; body?: string },
+) {
+  const fields = {
+    ...(input.subject !== undefined ? { subject: input.subject.trim() } : {}),
+    ...(input.body !== undefined ? { body: input.body.trim() } : {}),
+  };
+  if (Object.keys(fields).length === 0) {
+    return { ok: false as const, error: "Nothing to update", status: 400 };
   }
+  const invalid = validateCampaignFields(fields);
+  if (invalid) return { ok: false as const, error: invalid, status: 400 };
 
-  if (campaign.status === "SENT") {
-    return { ok: false as const, error: "Campaign was already sent", status: 409 };
-  }
+  const { count } = await prisma.newsletterCampaign.updateMany({
+    where: { id: campaignId, organizationId, status: "DRAFT" },
+    data: fields,
+  });
+  if (count === 0) return draftGuardFailure(organizationId, campaignId);
 
+  const campaign = await prisma.newsletterCampaign.findUniqueOrThrow({
+    where: { id: campaignId },
+    include: campaignInclude,
+  });
+  return { ok: true as const, campaign };
+}
+
+export async function deleteNewsletterCampaign(organizationId: string, campaignId: string) {
+  const { count } = await prisma.newsletterCampaign.deleteMany({
+    where: { id: campaignId, organizationId, status: "DRAFT" },
+  });
+  if (count === 0) return draftGuardFailure(organizationId, campaignId);
+  return { ok: true as const };
+}
+
+/**
+ * No email provider is configured, so this only records the campaign as sent
+ * (with the active-subscriber count at that moment). It does not deliver email.
+ */
+export async function markNewsletterCampaignSent(organizationId: string, campaignId: string) {
   const activeCount = await prisma.newsletterSubscriber.count({
     where: { organizationId, status: "ACTIVE" },
   });
 
-  const updated = await prisma.newsletterCampaign.update({
-    where: { id: campaignId },
+  const { count } = await prisma.newsletterCampaign.updateMany({
+    where: { id: campaignId, organizationId, status: "DRAFT" },
     data: {
       status: "SENT" satisfies NewsletterCampaignStatus,
       sentAt: new Date(),
       recipientCount: activeCount,
     },
-    include: {
-      createdBy: { select: { id: true, name: true, email: true } },
-    },
   });
+  if (count === 0) {
+    const failure = await draftGuardFailure(organizationId, campaignId);
+    return failure.status === 409
+      ? { ...failure, error: "Campaign was already marked as sent" }
+      : failure;
+  }
 
-  return { ok: true as const, campaign: updated, recipientCount: activeCount };
+  const campaign = await prisma.newsletterCampaign.findUniqueOrThrow({
+    where: { id: campaignId },
+    include: campaignInclude,
+  });
+  return { ok: true as const, campaign, recipientCount: activeCount };
 }

@@ -9,6 +9,7 @@ import {
   type AppSession,
 } from "@/lib/api";
 import { canAccessLesson, findLessonForTeacher } from "@/lib/course-access";
+import { redactResourceForLearner } from "@/lib/lesson-resources";
 
 type Params = { params: Promise<{ resourceId: string }> };
 
@@ -65,18 +66,27 @@ export async function GET(_request: Request, { params }: Params) {
     return jsonError("Forbidden", 403);
   }
 
-  const latestAttempt =
-    tenant.member?.role === "STUDENT"
-      ? await prisma.resourceAttempt.findFirst({
-          where: {
-            resourceId: resource.id,
-            studentId: session.user.id,
-          },
-          orderBy: { createdAt: "desc" },
-        })
-      : null;
+  const canManage = await teacherCanManage(
+    resource.id,
+    tenant.organizationId,
+    session,
+    tenant.member,
+  );
 
-  return Response.json({ resource, latestAttempt });
+  const latestAttempt = canManage
+    ? null
+    : await prisma.resourceAttempt.findFirst({
+        where: {
+          resourceId: resource.id,
+          studentId: session.user.id,
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+  return Response.json({
+    resource: canManage ? resource : redactResourceForLearner(resource),
+    latestAttempt,
+  });
 }
 
 export async function PATCH(request: Request, { params }: Params) {

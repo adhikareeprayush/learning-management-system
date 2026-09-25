@@ -1,13 +1,24 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
-import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import { cleanString, jsonError, requireSession, requireTenantApi, type AppSession } from "@/lib/api";
+import { formatCoursePrice } from "@/lib/pricing";
 import { isOrgAdmin } from "@/lib/tenant";
+import type { OrganizationMember } from "@prisma/client";
 
 type Params = { params: Promise<{ courseId: string }> };
 
-function formatPrice(cents: number) {
-  return `$${(cents / 100).toFixed(2)}`;
+// Stays well below Postgres int4 max so a typo can't overflow the column.
+const MAX_MINOR_UNITS = 1_000_000_000;
+
+function isCourseAdmin(session: AppSession, member: OrganizationMember | null) {
+  return session.user.role === "ADMIN" || isOrgAdmin(member);
+}
+
+function parseMinorUnits(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MAX_MINOR_UNITS
+    ? value
+    : null;
 }
 
 export async function GET(_request: Request, { params }: Params) {
@@ -83,8 +94,9 @@ export async function GET(_request: Request, { params }: Params) {
         image: resolveMediaUrl(course.thumbnail),
         instructor: course.instructor,
         level: course.level,
-        price: formatPrice(course.price),
+        price: formatCoursePrice(course),
         priceCents: course.price,
+        priceNpr: course.priceNpr,
         duration: course.duration,
         outcomes: course.outcomes,
         featured: course.featured,
@@ -131,9 +143,31 @@ export async function PATCH(request: Request, { params }: Params) {
     }
 
     const isOwner = existing.instructorId === session.user.id;
-    const isAdmin = isOrgAdmin(tenant.member);
+    const isAdmin = isCourseAdmin(session, tenant.member);
     if (!isOwner && !isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    if (body.title !== undefined && !cleanString(body.title, 200)) {
+      return jsonError("title is required", 400);
+    }
+
+    let price: number | undefined;
+    if (body.price !== undefined) {
+      const parsed = parseMinorUnits(body.price);
+      if (parsed === null) {
+        return jsonError("price must be a whole number of cents (0 or more)", 400);
+      }
+      price = parsed;
+    }
+
+    let priceNpr: number | undefined;
+    if (body.priceNpr !== undefined) {
+      const parsed = parseMinorUnits(body.priceNpr);
+      if (parsed === null || (parsed > 0 && parsed < 1000)) {
+        return jsonError("priceNpr must be 0 (free) or at least 1000 paisa (Rs 10)", 400);
+      }
+      priceNpr = parsed;
     }
 
     if (status && !isAdmin) {
@@ -156,18 +190,18 @@ export async function PATCH(request: Request, { params }: Params) {
         where: { courseId: existing.id },
       });
       const proposed = {
-        title: body.title !== undefined ? String(body.title).trim() : existing.title,
+        title: body.title !== undefined ? cleanString(body.title, 200) : existing.title,
         description:
           body.description !== undefined
-            ? String(body.description).trim()
+            ? cleanString(body.description, 20_000)
             : existing.description,
         category:
           body.category !== undefined
-            ? String(body.category).trim()
+            ? cleanString(body.category, 100)
             : existing.category,
         thumbnail:
           body.thumbnail !== undefined
-            ? String(body.thumbnail).trim()
+            ? cleanString(body.thumbnail, 2_000)
             : existing.thumbnail,
       };
       const missing = [
@@ -189,14 +223,15 @@ export async function PATCH(request: Request, { params }: Params) {
       where: { id: existing.id },
       data: {
         ...(status ? { status: status as (typeof allowed)[number] } : {}),
-        ...(body.title !== undefined ? { title: String(body.title).trim().slice(0, 200) } : {}),
-        ...(body.description !== undefined ? { description: String(body.description).trim().slice(0, 20_000) || null } : {}),
-        ...(body.category !== undefined ? { category: String(body.category).trim().slice(0, 100) || null } : {}),
-        ...(body.thumbnail !== undefined ? { thumbnail: String(body.thumbnail).trim().slice(0, 2_000) || null } : {}),
+        ...(body.title !== undefined ? { title: cleanString(body.title, 200) } : {}),
+        ...(body.description !== undefined ? { description: cleanString(body.description, 20_000) || null } : {}),
+        ...(body.category !== undefined ? { category: cleanString(body.category, 100) || null } : {}),
+        ...(body.thumbnail !== undefined ? { thumbnail: cleanString(body.thumbnail, 2_000) || null } : {}),
         ...(body.level && ["BEGINNER", "INTERMEDIATE", "ADVANCED"].includes(body.level) ? { level: body.level } : {}),
         ...(body.featured !== undefined && isAdmin ? { featured: Boolean(body.featured) } : {}),
         ...(Array.isArray(body.outcomes) ? { outcomes: body.outcomes.map((item: unknown) => String(item).trim()).filter(Boolean).slice(0, 30) } : {}),
-        ...(body.price !== undefined && Number.isFinite(Number(body.price)) ? { price: Math.max(0, Math.round(Number(body.price))) } : {}),
+        ...(price !== undefined ? { price } : {}),
+        ...(priceNpr !== undefined ? { priceNpr } : {}),
         ...(body.duration !== undefined && Number.isFinite(Number(body.duration)) ? { duration: Math.max(0, Math.round(Number(body.duration))) } : {}),
       },
     });
@@ -212,26 +247,49 @@ export async function PATCH(request: Request, { params }: Params) {
 }
 
 export async function DELETE(_request: Request, { params }: Params) {
-  const tenant = await requireTenantApi();
-  if (tenant instanceof Response) return tenant;
+  try {
+    const tenant = await requireTenantApi();
+    if (tenant instanceof Response) return tenant;
 
-  const session = await requireSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const session = await requireSession();
+    if (!session) return jsonError("Unauthorized", 401);
 
-  const { courseId } = await params;
-  const existing = await prisma.course.findFirst({
-    where: {
-      organizationId: tenant.organizationId,
-      OR: [{ id: courseId }, { slug: courseId }],
-    },
-  });
-  if (!existing) return NextResponse.json({ error: "Course not found" }, { status: 404 });
+    const { courseId } = await params;
+    const existing = await prisma.course.findFirst({
+      where: {
+        organizationId: tenant.organizationId,
+        OR: [{ id: courseId }, { slug: courseId }],
+      },
+    });
+    if (!existing) return jsonError("Course not found", 404);
 
-  const isAdmin = isOrgAdmin(tenant.member);
-  if (!isAdmin && existing.instructorId !== session.user.id) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (!isCourseAdmin(session, tenant.member) && existing.instructorId !== session.user.id) {
+      return jsonError("Forbidden", 403);
+    }
+
+    // Enrollments and payments cascade with the course, so deleting it would
+    // erase students' progress and the payment history.
+    const [enrollments, payments] = await Promise.all([
+      prisma.enrollment.count({ where: { courseId: existing.id } }),
+      prisma.payment.count({ where: { courseId: existing.id } }),
+    ]);
+    if (enrollments > 0 || payments > 0) {
+      const records = [
+        enrollments > 0 && `${enrollments} enrollment${enrollments === 1 ? "" : "s"}`,
+        payments > 0 && `${payments} payment${payments === 1 ? "" : "s"}`,
+      ]
+        .filter(Boolean)
+        .join(" and ");
+      return jsonError(
+        `This course has ${records}. Archive it instead so those records are kept.`,
+        409,
+      );
+    }
+
+    await prisma.course.delete({ where: { id: existing.id } });
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    console.error("DELETE /api/courses/[courseId]", error);
+    return jsonError("Internal server error", 500);
   }
-
-  await prisma.course.delete({ where: { id: existing.id } });
-  return new Response(null, { status: 204 });
 }

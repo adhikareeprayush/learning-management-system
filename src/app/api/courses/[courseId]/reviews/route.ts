@@ -11,6 +11,7 @@ import {
   requireSession,
   requireTenantApi,
 } from "@/lib/api";
+import { resolveLearnerMember } from "@/lib/membership";
 
 type Params = { params: Promise<{ courseId: string }> };
 
@@ -60,7 +61,12 @@ export async function POST(request: Request, { params }: Params) {
 
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (tenant.member?.role !== "STUDENT") {
+  const learner = await resolveLearnerMember(
+    tenant.organizationId,
+    session.user,
+    tenant.member,
+  );
+  if (learner?.role !== "STUDENT") {
     return jsonError("Only students can submit course reviews", 403);
   }
 
@@ -91,7 +97,7 @@ export async function POST(request: Request, { params }: Params) {
     );
   }
 
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
   const rating = Math.round(finiteNumber(body.rating));
   if (rating < 1 || rating > 5) {
     return jsonError("Rating must be between 1 and 5", 400);
@@ -143,7 +149,12 @@ export async function DELETE(_request: Request, { params }: Params) {
 
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
-  if (tenant.member?.role !== "STUDENT") {
+  const learner = await resolveLearnerMember(
+    tenant.organizationId,
+    session.user,
+    tenant.member,
+  );
+  if (learner?.role !== "STUDENT") {
     return jsonError("Forbidden", 403);
   }
 

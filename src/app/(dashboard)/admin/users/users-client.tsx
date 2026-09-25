@@ -1,12 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Search, Users, X } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
+import { ChevronLeft, ChevronRight, Search, ShieldAlert, Users, X } from "lucide-react";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { FlashBanner } from "@/components/ui/flash-banner";
 import { UserAvatar } from "@/components/ui/user-avatar";
 
 type UserRole = "ADMIN" | "INSTRUCTOR" | "STUDENT";
+type RoleFilter = "ALL" | UserRole;
 
 export type AdminUser = {
   id: string;
@@ -32,6 +35,12 @@ const roleStyles: Record<UserRole, string> = {
   ADMIN: "bg-amber-50 text-amber-900",
 };
 
+const roleChangeNotes: Record<UserRole, string> = {
+  ADMIN: "Admins get full access to users, payments, courses, and settings.",
+  INSTRUCTOR: "Instructors can create courses and see their students.",
+  STUDENT: "Students can only enroll in and take courses.",
+};
+
 const joinedDateFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
   year: "numeric",
@@ -42,36 +51,77 @@ function formatJoinedDate(joinedAt: string) {
   return joinedDateFormatter.format(new Date(joinedAt));
 }
 
+function usersHref({ q, role, page }: { q: string; role: RoleFilter; page: number }) {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (role !== "ALL") params.set("role", role);
+  if (page > 1) params.set("page", String(page));
+  const query = params.toString();
+  return query ? `/admin/users?${query}` : "/admin/users";
+}
+
 export default function AdminUsersClient({
+  currentUserId,
   initialUsers,
   initialQuery = "",
+  initialRole = "ALL",
+  page,
+  pageCount,
+  pageSize,
+  total,
 }: {
+  currentUserId: string;
   initialUsers: AdminUser[];
   initialQuery?: string;
+  initialRole?: RoleFilter;
+  page: number;
+  pageCount: number;
+  pageSize: number;
+  total: number;
 }) {
+  const router = useRouter();
+  const [navigating, startNavigation] = useTransition();
   const [query, setQuery] = useState(initialQuery);
-  const [role, setRole] = useState<"ALL" | UserRole>("ALL");
   const [users, setUsers] = useState(initialUsers);
   const [selected, setSelected] = useState<AdminUser | null>(null);
+  const [pendingRole, setPendingRole] = useState<UserRole | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const filtered = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return users.filter((user) => {
-      if (role !== "ALL" && user.role !== role) return false;
-      if (!normalized) return true;
-      return (
-        user.name.toLowerCase().includes(normalized) ||
-        user.email.toLowerCase().includes(normalized) ||
-        roleLabels[user.role].toLowerCase().includes(normalized)
+  const firstShown = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastShown = Math.min(total, (page - 1) * pageSize + users.length);
+  const selectedIsSelf = selected?.id === currentUserId;
+  const nextRole = pendingRole ?? selected?.role ?? "STUDENT";
+
+  function navigate(next: { q?: string; role?: RoleFilter; page?: number }) {
+    startNavigation(() => {
+      router.push(
+        usersHref({
+          q: (next.q ?? initialQuery).trim(),
+          role: next.role ?? initialRole,
+          page: next.page ?? 1,
+        }),
       );
     });
-  }, [query, role, users]);
+  }
 
-  async function updateRole(user: AdminUser, nextRole: UserRole) {
-    if (nextRole === user.role) return;
+  function openUser(user: AdminUser) {
+    setSelected(user);
+    setPendingRole(null);
+    setConfirming(false);
+    setError(null);
+  }
+
+  function closeUser() {
+    setSelected(null);
+    setPendingRole(null);
+    setConfirming(false);
+  }
+
+  async function updateRole(user: AdminUser, role: UserRole) {
+    if (role === user.role) return;
 
     setBusyId(user.id);
     setError(null);
@@ -81,7 +131,7 @@ export default function AdminUsersClient({
       const response = await fetch(`/api/admin/users/${user.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role: nextRole }),
+        body: JSON.stringify({ role }),
       });
       const data = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -101,7 +151,9 @@ export default function AdminUsersClient({
       setSelected((current) =>
         current?.id === user.id ? { ...current, role: savedRole } : current,
       );
-      setFlash(`${user.name} is now an ${roleLabels[savedRole]}.`);
+      setPendingRole(null);
+      setConfirming(false);
+      setFlash(`${user.name} is now ${savedRole === "ADMIN" ? "an" : "a"} ${roleLabels[savedRole]}.`);
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -121,7 +173,7 @@ export default function AdminUsersClient({
       />
 
       <FlashBanner message={flash} onDismiss={() => setFlash(null)} />
-      {error ? (
+      {error && !selected ? (
         <p
           role="alert"
           className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
@@ -134,39 +186,56 @@ export default function AdminUsersClient({
         <div className="flex items-center gap-2 text-sm text-muted">
           <Users className="size-4 text-brand-purple" />
           <span>
-            <strong className="text-brand-navy">{filtered.length}</strong>{" "}
-            {filtered.length === 1 ? "user" : "users"} shown
+            {total === 0 ? (
+              "No users"
+            ) : (
+              <>
+                <strong className="text-brand-navy">
+                  {firstShown}–{lastShown}
+                </strong>{" "}
+                of <strong className="text-brand-navy">{total}</strong>{" "}
+                {total === 1 ? "user" : "users"}
+              </>
+            )}
           </span>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <label className="relative min-w-0 sm:w-56">
+          <form
+            role="search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              navigate({ q: query });
+            }}
+            className="relative min-w-0 sm:w-64"
+          >
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
             <input
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Filter users…"
+              placeholder="Search name or email…"
+              aria-label="Search users by name or email"
               className="h-10 w-full rounded-xl border border-black/8 bg-white pl-9 pr-3 text-sm outline-none transition focus:border-brand-purple/40"
             />
-          </label>
+          </form>
           <select
-            value={role}
+            value={initialRole}
             onChange={(event) =>
-              setRole(event.target.value as "ALL" | UserRole)
+              navigate({ q: query, role: event.target.value as RoleFilter })
             }
             className="h-10 rounded-xl border border-black/8 bg-white px-3 text-sm outline-none transition focus:border-brand-purple/40"
             aria-label="Filter by role"
           >
             <option value="ALL">All roles</option>
-            <option value="STUDENT">Student</option>
-            <option value="INSTRUCTOR">Instructor</option>
-            <option value="ADMIN">Admin</option>
+            <option value="STUDENT">Students</option>
+            <option value="INSTRUCTOR">Instructors</option>
+            <option value="ADMIN">Admins</option>
           </select>
         </div>
       </div>
 
-      <div className="space-y-3 lg:hidden">
-        {filtered.map((user) => (
+      <div className={`space-y-3 transition-opacity lg:hidden ${navigating ? "opacity-60" : ""}`}>
+        {users.map((user) => (
           <article
             key={user.id}
             className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)]"
@@ -174,7 +243,12 @@ export default function AdminUsersClient({
             <div className="flex items-start gap-3">
               <UserAvatar name={user.name} image={user.image} size="sm" />
               <div className="min-w-0 flex-1">
-                <p className="font-medium text-[#324361]">{user.name}</p>
+                <p className="font-medium text-[#324361]">
+                  {user.name}
+                  {user.id === currentUserId ? (
+                    <span className="ml-1.5 text-xs font-normal text-muted">(you)</span>
+                  ) : null}
+                </p>
                 <p className="truncate text-sm text-muted">{user.email}</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <span
@@ -199,10 +273,7 @@ export default function AdminUsersClient({
             </div>
             <button
               type="button"
-              onClick={() => {
-                setSelected(user);
-                setError(null);
-              }}
+              onClick={() => openUser(user)}
               className="mt-4 w-full rounded-lg border border-black/8 px-3 py-2 text-sm font-semibold text-brand-navy transition hover:bg-surface"
             >
               View and edit
@@ -211,7 +282,11 @@ export default function AdminUsersClient({
         ))}
       </div>
 
-      <div className="hidden overflow-hidden rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)] lg:block">
+      <div
+        className={`hidden overflow-hidden rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition-opacity lg:block ${
+          navigating ? "opacity-60" : ""
+        }`}
+      >
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left text-sm">
             <thead className="bg-surface/80 text-muted">
@@ -219,13 +294,13 @@ export default function AdminUsersClient({
                 <th className="px-4 py-3 font-medium sm:px-5">Name</th>
                 <th className="px-4 py-3 font-medium sm:px-5">Email</th>
                 <th className="px-4 py-3 font-medium sm:px-5">Role</th>
-                <th className="px-4 py-3 font-medium sm:px-5">Email</th>
+                <th className="px-4 py-3 font-medium sm:px-5">Verification</th>
                 <th className="px-4 py-3 font-medium sm:px-5">Joined</th>
                 <th className="px-4 py-3 font-medium sm:px-5">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((user) => (
+              {users.map((user) => (
                 <tr
                   key={user.id}
                   className="border-t border-black/5 transition hover:bg-surface/50"
@@ -233,7 +308,12 @@ export default function AdminUsersClient({
                   <td className="px-4 py-4 sm:px-5">
                     <div className="flex items-center gap-3">
                       <UserAvatar name={user.name} image={user.image} size="sm" />
-                      <span className="font-medium text-[#324361]">{user.name}</span>
+                      <span className="font-medium text-[#324361]">
+                        {user.name}
+                        {user.id === currentUserId ? (
+                          <span className="ml-1.5 text-xs font-normal text-muted">(you)</span>
+                        ) : null}
+                      </span>
                     </div>
                   </td>
                   <td className="px-4 py-4 text-muted sm:px-5">
@@ -263,10 +343,7 @@ export default function AdminUsersClient({
                   <td className="px-4 py-4 sm:px-5">
                     <button
                       type="button"
-                      onClick={() => {
-                        setSelected(user);
-                        setError(null);
-                      }}
+                      onClick={() => openUser(user)}
                       className="rounded-lg border border-black/8 px-2.5 py-1 text-xs font-semibold text-brand-navy transition hover:bg-surface"
                     >
                       View and edit
@@ -279,10 +356,43 @@ export default function AdminUsersClient({
         </div>
       </div>
 
-      {filtered.length === 0 ? (
+      {users.length === 0 ? (
         <p className="text-center text-sm text-muted">
           No users match these filters.
         </p>
+      ) : null}
+
+      {pageCount > 1 ? (
+        <nav
+          aria-label="Users pagination"
+          className="flex items-center justify-between gap-3 text-sm"
+        >
+          {page > 1 ? (
+            <Link
+              href={usersHref({ q: initialQuery, role: initialRole, page: page - 1 })}
+              className="inline-flex h-9 items-center gap-1 rounded-xl border border-black/8 bg-white px-3 font-semibold text-brand-navy transition hover:bg-surface"
+            >
+              <ChevronLeft className="size-4" />
+              Previous
+            </Link>
+          ) : (
+            <span />
+          )}
+          <span className="text-muted">
+            Page <strong className="text-brand-navy">{page}</strong> of {pageCount}
+          </span>
+          {page < pageCount ? (
+            <Link
+              href={usersHref({ q: initialQuery, role: initialRole, page: page + 1 })}
+              className="inline-flex h-9 items-center gap-1 rounded-xl border border-black/8 bg-white px-3 font-semibold text-brand-navy transition hover:bg-surface"
+            >
+              Next
+              <ChevronRight className="size-4" />
+            </Link>
+          ) : (
+            <span />
+          )}
+        </nav>
       ) : null}
 
       {selected ? (
@@ -315,7 +425,7 @@ export default function AdminUsersClient({
               </div>
               <button
                 type="button"
-                onClick={() => setSelected(null)}
+                onClick={closeUser}
                 className="grid size-8 place-items-center rounded-lg text-muted transition hover:bg-surface"
                 aria-label="Close"
               >
@@ -356,31 +466,84 @@ export default function AdminUsersClient({
                 Role
               </span>
               <select
-                value={selected.role}
-                disabled={busyId === selected.id}
-                onChange={(event) =>
-                  void updateRole(selected, event.target.value as UserRole)
-                }
-                className="h-10 w-full rounded-xl border border-black/8 bg-white px-3 text-sm outline-none focus:border-brand-purple/40 disabled:cursor-wait disabled:opacity-60"
+                value={nextRole}
+                disabled={busyId === selected.id || selectedIsSelf || confirming}
+                onChange={(event) => {
+                  setPendingRole(event.target.value as UserRole);
+                  setError(null);
+                }}
+                className="h-10 w-full rounded-xl border border-black/8 bg-white px-3 text-sm outline-none focus:border-brand-purple/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <option value="STUDENT">Student</option>
                 <option value="INSTRUCTOR">Instructor</option>
                 <option value="ADMIN">Admin</option>
               </select>
               <span className="mt-1.5 block text-xs text-muted">
-                Changes are saved immediately.
+                {selectedIsSelf
+                  ? "You can't change your own role. Ask another admin."
+                  : roleChangeNotes[nextRole]}
               </span>
             </label>
 
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setSelected(null)}
-                className="rounded-xl border border-black/8 px-3 py-2 text-sm font-semibold text-muted transition hover:bg-surface"
+            {error ? (
+              <p
+                role="alert"
+                className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
               >
-                Close
-              </button>
-            </div>
+                {error}
+              </p>
+            ) : null}
+
+            {confirming && pendingRole ? (
+              <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <p className="flex items-start gap-2">
+                  <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    Change <strong>{selected.name}</strong> from{" "}
+                    {roleLabels[selected.role]} to{" "}
+                    <strong>{roleLabels[pendingRole]}</strong>?
+                  </span>
+                </p>
+                <div className="mt-3 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={busyId === selected.id}
+                    onClick={() => setConfirming(false)}
+                    className="rounded-xl border border-black/8 bg-white px-3 py-2 text-sm font-semibold text-muted transition hover:bg-surface disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyId === selected.id}
+                    onClick={() => void updateRole(selected, pendingRole)}
+                    className="rounded-xl bg-brand-navy px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand-navy/90 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {busyId === selected.id ? "Saving…" : "Confirm change"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={closeUser}
+                  className="rounded-xl border border-black/8 px-3 py-2 text-sm font-semibold text-muted transition hover:bg-surface"
+                >
+                  Close
+                </button>
+                {!selectedIsSelf ? (
+                  <button
+                    type="button"
+                    disabled={!pendingRole || pendingRole === selected.role}
+                    onClick={() => setConfirming(true)}
+                    className="rounded-xl bg-brand-navy px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand-navy/90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Save role
+                  </button>
+                ) : null}
+              </div>
+            )}
           </div>
         </div>
       ) : null}

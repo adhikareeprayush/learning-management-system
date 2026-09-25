@@ -16,10 +16,9 @@ import { authClient } from "@/lib/auth-client";
 import {
   dashboardHomeHref,
   profileHref,
-  roleProfiles,
   settingsHref,
   type DashboardRole,
-} from "@/lib/mock-dashboard-chrome";
+} from "@/lib/nav";
 
 type ProfileMenuProps = {
   role: DashboardRole;
@@ -29,10 +28,10 @@ type ProfileMenuProps = {
 export function ProfileMenu({ role, compact = false }: ProfileMenuProps) {
   const router = useRouter();
   const sessionUser = useDashboardUser();
-  const fallback = roleProfiles[role];
-  const profile = sessionUser
-    ? { name: sessionUser.name, image: sessionUser.image }
-    : { name: fallback.name, image: null };
+  const profile = {
+    name: sessionUser?.name || "Account",
+    image: sessionUser?.image ?? null,
+  };
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
