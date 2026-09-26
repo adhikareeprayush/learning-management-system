@@ -1,15 +1,8 @@
+import { isRequiredQuiz, maybeIssueCertificate } from "@/lib/certificates";
 import { prisma } from "@/lib/db";
+import { formatDuration } from "@/lib/format";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { redactResourceForLearner } from "@/lib/lesson-resources";
-
-function formatDuration(minutes: number) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h > 0) {
-    return `${h.toString().padStart(2, "0")}h ${m.toString().padStart(2, "0")}m`;
-  }
-  return `${m.toString().padStart(2, "0")}:00`;
-}
 
 export async function getEnrolledStudentCourse(
   studentId: string,
@@ -71,10 +64,12 @@ export async function getEnrolledStudentCourse(
     : [];
 
   const latestAttemptByResource = new Map<string, (typeof attemptRows)[number]>();
+  const passedResourceIds = new Set<string>();
   for (const attempt of attemptRows) {
     if (!latestAttemptByResource.has(attempt.resourceId)) {
       latestAttemptByResource.set(attempt.resourceId, attempt);
     }
+    if (attempt.passed) passedResourceIds.add(attempt.resourceId);
   }
 
   function mapResources(
@@ -95,6 +90,8 @@ export async function getEnrolledStudentCourse(
         title: safe.title,
         url: safe.url,
         description: safe.description,
+        requiredForCertificate: isRequiredQuiz(resource),
+        passed: passedResourceIds.has(resource.id),
         latestAttempt: attempt
           ? {
               score: attempt.score,
@@ -113,9 +110,7 @@ export async function getEnrolledStudentCourse(
       duration: formatDuration(lesson.duration),
       videoUrl: lesson.videoUrl ?? "",
       summary: lesson.summary ?? "",
-      content: lesson.content
-        ? lesson.content.split(/\n\n+/).filter(Boolean)
-        : [],
+      content: lesson.content ?? "",
       completed: completedIds.has(lesson.id),
       resources: mapResources(lesson.resources),
     };
@@ -164,6 +159,37 @@ export async function getEnrolledStudentCourse(
       ? 0
       : Math.round((completedLessons / totalLessons) * 100);
 
+  const quizzes = flat.flatMap((lesson) =>
+    lesson.resources
+      .filter((resource) => resource.requiredForCertificate)
+      .map((resource) => ({
+        id: resource.id,
+        title: resource.title,
+        lessonId: lesson.id,
+        lessonTitle: lesson.title,
+        passed: resource.passed,
+      })),
+  );
+  const remainingQuizzes = quizzes.filter((quiz) => !quiz.passed);
+
+  let certificate = await prisma.certificate.findUnique({
+    where: { studentId_courseId: { studentId, courseId: course.id } },
+    select: { id: true, credentialId: true },
+  });
+  // Quiz attempts don't issue certificates themselves, so the learner's next
+  // view of the course picks up the last passed quiz. Re-checked on the server.
+  if (
+    !certificate &&
+    totalLessons > 0 &&
+    completedLessons >= totalLessons &&
+    remainingQuizzes.length === 0
+  ) {
+    const issued = await maybeIssueCertificate(studentId, course.id);
+    certificate = issued
+      ? { id: issued.id, credentialId: issued.credentialId }
+      : null;
+  }
+
   return {
     id: course.id,
     slug: course.slug,
@@ -178,6 +204,9 @@ export async function getEnrolledStudentCourse(
     about: course.description ?? "",
     outcomes: course.outcomes,
     modules,
+    quizzes,
+    remainingQuizzes,
+    certificate,
   };
 }
 

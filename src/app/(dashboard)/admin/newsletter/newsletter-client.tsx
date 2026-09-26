@@ -1,10 +1,25 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { CheckCheck, Info, Mail, Megaphone, Pencil, Search, Trash2, Users, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  CheckCheck,
+  FlaskConical,
+  Info,
+  Mail,
+  Megaphone,
+  Pause,
+  Pencil,
+  Search,
+  Send,
+  Trash2,
+  Users,
+  X,
+} from "lucide-react";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { Button } from "@/components/ui/button";
 import { FlashBanner } from "@/components/ui/flash-banner";
+import type { EmailMode } from "@/lib/email";
+import type { NewsletterSendProgress } from "@/lib/newsletter";
 
 export type AdminNewsletterSubscriber = {
   id: string;
@@ -20,9 +35,12 @@ export type AdminNewsletterCampaign = {
   id: string;
   subject: string;
   body: string;
-  status: "DRAFT" | "SENT";
+  status: "DRAFT" | "SENDING" | "SENT";
+  /** Set only when the campaign was really emailed (not just marked as sent). */
+  startedAt: string | null;
   sentAt: string | null;
   recipientCount: number;
+  failedCount: number;
   createdAt: string;
   createdBy: { id: string; name: string; email: string };
 };
@@ -35,13 +53,88 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
 
 type Tab = "subscribers" | "campaigns";
 
+type CampaignActionResponse = {
+  error?: string;
+  campaign?: AdminNewsletterCampaign;
+  progress?: NewsletterSendProgress;
+  claimed?: number;
+  to?: string;
+  mode?: EmailMode;
+};
+
+async function postCampaignAction(payload: Record<string, unknown>) {
+  const res = await fetch("/api/admin/newsletter/campaigns", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = (await res.json().catch(() => ({}))) as CampaignActionResponse;
+  return { ok: res.ok, data };
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function plural(count: number, word: string) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+function campaignBadge(
+  campaign: AdminNewsletterCampaign,
+  progress: NewsletterSendProgress | undefined,
+) {
+  if (campaign.status === "DRAFT") {
+    return { label: "Draft", className: "bg-amber-50 text-amber-900" };
+  }
+  if (campaign.status === "SENDING") {
+    return {
+      label: progress ? `Sending ${progress.total - progress.remaining}/${progress.total}` : "Sending",
+      className: "bg-sky-50 text-sky-800",
+    };
+  }
+  return {
+    label: campaign.startedAt ? `Sent to ${campaign.recipientCount}` : "Marked sent",
+    className: "bg-emerald-50 text-emerald-800",
+  };
+}
+
+const BANNER_COPY: Record<EmailMode, React.ReactNode> = {
+  smtp: (
+    <>
+      Campaigns are emailed to every active subscriber, each with a one-click unsubscribe
+      link. Keep this page open while a campaign sends; if it&apos;s interrupted, use
+      &ldquo;Resume sending&rdquo; and nobody gets it twice.
+    </>
+  ),
+  console: (
+    <>
+      Development mode: campaign emails are written to the server log instead of being
+      delivered. Ask your technical admin to configure email (SMTP) to send real email.
+    </>
+  ),
+  disabled: (
+    <>
+      Email delivery isn&apos;t configured for this platform yet. Campaigns are saved as
+      drafts and &ldquo;Mark as sent&rdquo; only records them — no emails go out.
+    </>
+  ),
+};
+
 export default function AdminNewsletterClient({
+  emailMode,
+  adminEmail,
   initialSubscribers,
   initialCampaigns,
+  initialProgress,
 }: {
+  emailMode: EmailMode;
+  adminEmail: string;
   initialSubscribers: AdminNewsletterSubscriber[];
   initialCampaigns: AdminNewsletterCampaign[];
+  initialProgress: Record<string, NewsletterSendProgress>;
 }) {
+  const canSend = emailMode !== "disabled";
   const [tab, setTab] = useState<Tab>("subscribers");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<"ALL" | "ACTIVE" | "UNSUBSCRIBED">("ALL");
@@ -56,6 +149,16 @@ export default function AdminNewsletterClient({
   const [editBody, setEditBody] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState(initialProgress);
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const pauseRequested = useRef(false);
+
+  useEffect(() => {
+    if (!sendingId) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [sendingId]);
 
   const filteredSubscribers = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -182,6 +285,88 @@ export default function AdminNewsletterClient({
     }
   }
 
+  function applyCampaignResponse(campaignId: string, data: CampaignActionResponse) {
+    if (data.campaign) {
+      const updated = data.campaign;
+      setCampaigns((prev) => prev.map((item) => (item.id === campaignId ? updated : item)));
+    }
+    if (data.progress) {
+      const next = data.progress;
+      setProgress((prev) => ({ ...prev, [campaignId]: next }));
+    }
+  }
+
+  async function sendTest(campaign: AdminNewsletterCampaign) {
+    setBusyId(campaign.id);
+    setError(null);
+    setFlash(null);
+    try {
+      const { ok, data } = await postCampaignAction({
+        action: "send_test",
+        campaignId: campaign.id,
+      });
+      if (!ok) throw new Error(data.error ?? "Test email failed");
+      setFlash(
+        data.mode === "console"
+          ? `Test printed to the server console (addressed to ${data.to}).`
+          : `Test sent to ${data.to}.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Test email failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /** Queues the campaign, then sends it batch by batch; the server keeps each request short. */
+  async function sendCampaign(campaign: AdminNewsletterCampaign) {
+    if (
+      campaign.status === "DRAFT" &&
+      !window.confirm(
+        `Email “${campaign.subject}” to ${plural(activeCount, "active subscriber")} now? Sent campaigns can't be edited.`,
+      )
+    ) {
+      return;
+    }
+    pauseRequested.current = false;
+    setSendingId(campaign.id);
+    setError(null);
+    setFlash(null);
+
+    try {
+      const start = await postCampaignAction({ action: "send", campaignId: campaign.id });
+      if (!start.ok) throw new Error(start.data.error ?? "Could not start sending");
+      applyCampaignResponse(campaign.id, start.data);
+
+      // Always run at least one batch: it also finalizes a campaign whose rows are all done.
+      let latest: NewsletterSendProgress | undefined;
+      do {
+        if (pauseRequested.current) {
+          setFlash("Sending paused. Resume any time; nobody gets the email twice.");
+          return;
+        }
+        const batch = await postCampaignAction({ action: "send_batch", campaignId: campaign.id });
+        applyCampaignResponse(campaign.id, batch.data);
+        if (!batch.ok) throw new Error(batch.data.error ?? "Sending stopped");
+        latest = batch.data.progress;
+        // Another tab or admin holds the remaining rows; give it a moment.
+        if (latest && !latest.done && batch.data.claimed === 0) await wait(2000);
+      } while (latest && !latest.done);
+
+      if (latest) {
+        setFlash(
+          `Campaign sent to ${plural(latest.sent, "subscriber")}${
+            latest.failed ? `; ${latest.failed} failed` : ""
+          }${latest.skipped ? `; ${latest.skipped} skipped (unsubscribed)` : ""}.`,
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sending stopped");
+    } finally {
+      setSendingId(null);
+    }
+  }
+
   function startEdit(campaign: AdminNewsletterCampaign) {
     setEditingId(campaign.id);
     setEditSubject(campaign.subject);
@@ -290,7 +475,7 @@ export default function AdminNewsletterClient({
               <Megaphone className="size-5" />
             </span>
             <div>
-              <p className="text-sm text-[#5c6b82]">Marked as sent</p>
+              <p className="text-sm text-[#5c6b82]">Sent campaigns</p>
               <p className="font-display text-2xl text-[#0b0a2e]">
                 {campaigns.filter((c) => c.status === "SENT").length}
               </p>
@@ -326,10 +511,7 @@ export default function AdminNewsletterClient({
 
       <p className="flex items-start gap-2 rounded-xl border border-brand-purple/15 bg-[#f7f5ff] px-4 py-3 text-sm text-brand-navy">
         <Info className="mt-0.5 size-4 shrink-0 text-brand-purple" />
-        <span>
-          Email delivery isn&apos;t configured for this platform yet. Campaigns are saved as
-          drafts and &ldquo;Mark as sent&rdquo; only records them — no emails go out.
-        </span>
+        <span>{BANNER_COPY[emailMode]}</span>
       </p>
 
       {tab === "subscribers" ? (
@@ -423,7 +605,9 @@ export default function AdminNewsletterClient({
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-[#5c6b82]">
-              Draft updates here, send them from your own email tool, then mark them as sent.
+              {canSend
+                ? "Draft an update, send yourself a test, then email it to every active subscriber."
+                : "Draft updates here, send them from your own email tool, then mark them as sent."}
             </p>
             <Button onClick={() => setComposing((value) => !value)}>
               {composing ? "Close composer" : "New campaign"}
@@ -529,70 +713,25 @@ export default function AdminNewsletterClient({
                     </div>
                   </form>
                 ) : (
-                  <article
+                  <CampaignCard
                     key={campaign.id}
-                    className="rounded-2xl border border-black/5 bg-white p-5 shadow-sm"
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="font-display text-lg text-[#0b0a2e]">
-                            {campaign.subject}
-                          </h3>
-                          <span
-                            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                              campaign.status === "SENT"
-                                ? "bg-emerald-50 text-emerald-800"
-                                : "bg-amber-50 text-amber-900"
-                            }`}
-                          >
-                            {campaign.status === "SENT" ? "Marked sent" : "Draft"}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-sm text-[#5c6b82]">
-                          By {campaign.createdBy.name} ·{" "}
-                          {dateFormatter.format(new Date(campaign.createdAt))}
-                          {campaign.status === "SENT" && campaign.sentAt
-                            ? ` · marked sent ${dateFormatter.format(new Date(campaign.sentAt))} (${campaign.recipientCount} active subscribers)`
-                            : null}
-                        </p>
-                      </div>
-                      {campaign.status === "DRAFT" ? (
-                        <div className="flex shrink-0 flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => startEdit(campaign)}
-                            disabled={busyId === campaign.id}
-                            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-black/8 bg-white px-3 text-sm font-semibold text-brand-navy transition hover:bg-surface disabled:opacity-50"
-                          >
-                            <Pencil className="size-3.5" />
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void deleteCampaign(campaign)}
-                            disabled={busyId === campaign.id}
-                            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-black/8 bg-white px-3 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-50"
-                          >
-                            <Trash2 className="size-3.5" />
-                            Delete
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void markSent(campaign)}
-                            disabled={busyId === campaign.id}
-                            className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-brand-navy px-3 text-sm font-semibold text-white transition hover:bg-brand-navy/90 disabled:opacity-50"
-                          >
-                            <CheckCheck className="size-3.5" />
-                            {busyId === campaign.id ? "Saving…" : "Mark as sent"}
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                    <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-[#324361]">
-                      {campaign.body}
-                    </p>
-                  </article>
+                    campaign={campaign}
+                    progress={progress[campaign.id]}
+                    canSend={canSend}
+                    activeCount={activeCount}
+                    adminEmail={adminEmail}
+                    busy={busyId === campaign.id}
+                    sending={sendingId === campaign.id}
+                    otherSending={sendingId !== null && sendingId !== campaign.id}
+                    onEdit={() => startEdit(campaign)}
+                    onDelete={() => void deleteCampaign(campaign)}
+                    onMarkSent={() => void markSent(campaign)}
+                    onSendTest={() => void sendTest(campaign)}
+                    onSend={() => void sendCampaign(campaign)}
+                    onPause={() => {
+                      pauseRequested.current = true;
+                    }}
+                  />
                 ),
               )
             )}
@@ -600,5 +739,174 @@ export default function AdminNewsletterClient({
         </div>
       )}
     </div>
+  );
+}
+
+const actionBase =
+  "inline-flex h-9 items-center gap-1.5 rounded-xl px-3 text-sm font-semibold transition disabled:opacity-50";
+const secondaryAction = `${actionBase} border border-black/8 bg-white text-brand-navy hover:bg-surface`;
+const deleteAction = `${actionBase} border border-black/8 bg-white text-red-700 hover:bg-red-50`;
+const primaryAction = `${actionBase} bg-brand-navy text-white hover:bg-brand-navy/90`;
+
+function CampaignCard({
+  campaign,
+  progress,
+  canSend,
+  activeCount,
+  adminEmail,
+  busy,
+  sending,
+  otherSending,
+  onEdit,
+  onDelete,
+  onMarkSent,
+  onSendTest,
+  onSend,
+  onPause,
+}: {
+  campaign: AdminNewsletterCampaign;
+  progress: NewsletterSendProgress | undefined;
+  canSend: boolean;
+  activeCount: number;
+  adminEmail: string;
+  busy: boolean;
+  sending: boolean;
+  otherSending: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onMarkSent: () => void;
+  onSendTest: () => void;
+  onSend: () => void;
+  onPause: () => void;
+}) {
+  const badge = campaignBadge(campaign, progress);
+  const processed = progress ? progress.total - progress.remaining : 0;
+  const percent = progress && progress.total > 0 ? Math.round((processed / progress.total) * 100) : 0;
+  const locked = busy || sending || otherSending;
+
+  let meta: string | null = null;
+  if (campaign.status === "SENT" && campaign.sentAt) {
+    const date = dateFormatter.format(new Date(campaign.sentAt));
+    meta = campaign.startedAt
+      ? ` · sent ${date}`
+      : ` · marked sent ${date} (${campaign.recipientCount} active subscribers)`;
+  }
+
+  return (
+    <article className="rounded-2xl border border-black/5 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-display text-lg text-[#0b0a2e]">{campaign.subject}</h3>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${badge.className}`}>
+              {badge.label}
+            </span>
+            {campaign.status === "SENT" && campaign.failedCount > 0 ? (
+              <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+                {campaign.failedCount} failed
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-1 text-sm text-[#5c6b82]">
+            By {campaign.createdBy.name} · {dateFormatter.format(new Date(campaign.createdAt))}
+            {meta}
+          </p>
+        </div>
+
+        {campaign.status === "DRAFT" ? (
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <button type="button" onClick={onEdit} disabled={locked} className={secondaryAction}>
+              <Pencil className="size-3.5" />
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={locked}
+              className={deleteAction}
+            >
+              <Trash2 className="size-3.5" />
+              Delete
+            </button>
+            {canSend ? (
+              <>
+                <button
+                  type="button"
+                  onClick={onSendTest}
+                  disabled={locked}
+                  title={`Send a test copy to ${adminEmail}`}
+                  className={secondaryAction}
+                >
+                  <FlaskConical className="size-3.5" />
+                  {busy ? "Sending test…" : "Send test to me"}
+                </button>
+                <button
+                  type="button"
+                  onClick={onSend}
+                  disabled={locked || activeCount === 0}
+                  title={activeCount === 0 ? "There are no active subscribers yet" : undefined}
+                  className={primaryAction}
+                >
+                  <Send className="size-3.5" />
+                  {sending ? "Starting…" : `Send to ${plural(activeCount, "subscriber")}`}
+                </button>
+              </>
+            ) : (
+              <button type="button" onClick={onMarkSent} disabled={locked} className={primaryAction}>
+                <CheckCheck className="size-3.5" />
+                {busy ? "Saving…" : "Mark as sent"}
+              </button>
+            )}
+          </div>
+        ) : campaign.status === "SENDING" ? (
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {sending ? (
+              <button type="button" onClick={onPause} className={secondaryAction}>
+                <Pause className="size-3.5" />
+                Pause
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={!canSend || locked}
+                className={primaryAction}
+              >
+                <Send className="size-3.5" />
+                Resume sending
+              </button>
+            )}
+          </div>
+        ) : null}
+      </div>
+
+      {campaign.status === "SENDING" && progress ? (
+        <div className="mt-4">
+          <div
+            role="progressbar"
+            aria-label="Sending progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+            className="h-2 overflow-hidden rounded-full bg-slate-100"
+          >
+            <div
+              className="h-full rounded-full bg-brand-teal transition-[width] duration-500"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+          <p className="mt-1.5 text-xs text-[#5c6b82]">
+            {processed} of {progress.total} processed · {progress.sent} sent
+            {progress.failed ? ` · ${progress.failed} failed` : ""}
+            {progress.skipped ? ` · ${progress.skipped} skipped` : ""}
+            {sending ? " · keep this page open" : ""}
+          </p>
+        </div>
+      ) : null}
+
+      <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-[#324361]">
+        {campaign.body}
+      </p>
+    </article>
   );
 }

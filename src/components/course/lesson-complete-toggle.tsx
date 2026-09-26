@@ -5,19 +5,34 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, Circle } from "lucide-react";
 import { FlashBanner } from "@/components/ui/flash-banner";
 
+/** PATCH the learner's completion for a lesson; throws with the API's message. */
+export async function saveLessonCompletion(lessonId: string, completed: boolean) {
+  const res = await fetch(`/api/lessons/${lessonId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ completed }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error ?? "Could not update progress");
+  }
+}
+
 type LessonCompleteToggleProps = {
   lessonId: string;
-  initialCompleted: boolean;
   lessonTitle: string;
+  /** Owned by the parent so the video player can mark the lesson complete too. */
+  completed: boolean;
+  onCompletedChange: (completed: boolean) => void;
 };
 
 export function LessonCompleteToggle({
   lessonId,
-  initialCompleted,
   lessonTitle,
+  completed,
+  onCompletedChange,
 }: LessonCompleteToggleProps) {
   const router = useRouter();
-  const [completed, setCompleted] = useState(initialCompleted);
   const [loading, setLoading] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,16 +42,8 @@ export function LessonCompleteToggle({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/lessons/${lessonId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ completed: next }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "Could not update progress");
-      }
-      setCompleted(next);
+      await saveLessonCompletion(lessonId, next);
+      onCompletedChange(next);
       setFlash(
         next
           ? `Marked “${lessonTitle}” complete.`

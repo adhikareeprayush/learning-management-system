@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { enrollUserInCourse } from "@/lib/enrollments";
+import { enrollUserInCourse, staffEnrollBlock } from "@/lib/enrollments";
 import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
 
 export async function GET() {
@@ -121,6 +121,15 @@ export async function POST(request: Request) {
         { error: "courseId is required" },
         { status: 400 },
       );
+    }
+
+    const staff = await staffEnrollBlock(
+      session.user,
+      { kind: "course", id: courseId },
+      tenant.organizationId,
+    );
+    if (staff) {
+      return NextResponse.json({ error: staff.message, staff }, { status: 403 });
     }
 
     // Membership is created on demand by enrollUserInCourse.

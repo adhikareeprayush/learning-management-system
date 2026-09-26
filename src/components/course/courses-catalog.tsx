@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   LayoutGrid,
   List,
@@ -34,15 +34,21 @@ function formatRating(course: CatalogCourse) {
   return `${course.averageRating.toFixed(1)} (${course.reviewCount})`;
 }
 
-export function CoursesCatalog() {
+export function CoursesCatalog({
+  initialCourses,
+}: {
+  /** Rendered on the server so the listing is in the HTML; filtering is client-side. */
+  initialCourses: CatalogApiCourse[];
+}) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const categoryParam = searchParams.get("category");
   const queryParam = searchParams.get("q");
 
-  const [courses, setCourses] = useState<CatalogCourse[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const courses: CatalogCourse[] = initialCourses.map((course) => ({
+    ...course,
+    levelLabel: levelLabel(course.level),
+  }));
   const [query, setQuery] = useState(() => queryParam ?? "");
   const [syncedQueryParam, setSyncedQueryParam] = useState(queryParam);
   const [level, setLevel] = useState<string>(ALL_FILTER);
@@ -56,35 +62,6 @@ export function CoursesCatalog() {
     setSyncedQueryParam(queryParam);
     if (queryParam != null) setQuery(queryParam);
   }
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const res = await fetch("/api/courses");
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Failed to load courses");
-        if (!cancelled) {
-          setCourses(
-            (data.courses as CatalogApiCourse[]).map((course) => ({
-              ...course,
-              levelLabel: levelLabel(course.level),
-            })),
-          );
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setLoadError(err instanceof Error ? err.message : "Failed to load");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const categoryCounts = new Map<string, number>();
   for (const course of courses) {
@@ -352,21 +329,28 @@ export function CoursesCatalog() {
         <div className="min-w-0">
           <div className="mb-4 sm:mb-5">
             <h2 className="font-display text-xl text-[#323232] sm:text-2xl">
-              {loading
-                ? "Loading…"
-                : `${filtered.length} course${filtered.length === 1 ? "" : "s"}`}
+              {filtered.length} course{filtered.length === 1 ? "" : "s"}
             </h2>
             <p className="text-sm text-muted">
               Prices in Nepalese rupees (NPR).
             </p>
-            {loadError ? (
-              <p className="mt-2 text-sm text-red-600">{loadError}</p>
-            ) : null}
           </div>
 
-          {loading ? (
-            <div className="rounded-3xl border border-black/5 bg-white px-4 py-12 text-center text-sm text-muted">
-              Loading courses…
+          {courses.length === 0 ? (
+            <div className="rounded-3xl border border-dashed border-brand-purple/30 bg-white px-4 py-12 text-center sm:px-6 sm:py-16">
+              <p className="font-display text-xl text-brand-navy sm:text-2xl">
+                New courses are on the way
+              </p>
+              <p className="mt-2 text-sm text-muted sm:text-base">
+                Nothing is published just yet. Check back soon, or explore our
+                learning roadmaps in the meantime.
+              </p>
+              <Link
+                href="/roadmaps"
+                className="mt-6 inline-block text-sm font-semibold text-brand-purple hover:text-brand-teal"
+              >
+                View roadmaps →
+              </Link>
             </div>
           ) : filtered.length === 0 ? (
             <div className="rounded-3xl border border-dashed border-brand-purple/30 bg-white px-4 py-12 text-center sm:px-6 sm:py-16">

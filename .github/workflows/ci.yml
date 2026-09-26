@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  CHECKPOINT_DISABLE: "1"
+  PRISMA_HIDE_UPDATE_MESSAGE: "1"
+
+jobs:
+  check:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    env:
+      # Build-time placeholders. Nothing listens on this port: pages that read
+      # the database at build time fall back to defaults.
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/lms
+      BETTER_AUTH_SECRET: ci-placeholder-secret-never-used-at-runtime
+      BETTER_AUTH_URL: http://localhost:3005
+      NEXT_PUBLIC_APP_URL: http://localhost:3005
+      NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT: https://ik.imagekit.io/ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm (version from package.json#packageManager)
+        run: corepack enable
+
+      - name: Locate pnpm store
+        run: echo "PNPM_STORE=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.PNPM_STORE }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  database:
+    name: Migrations and seed
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lms
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lms"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lms
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm (version from package.json#packageManager)
+        run: corepack enable
+
+      - name: Locate pnpm store
+        run: echo "PNPM_STORE=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.PNPM_STORE }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply migrations
+        run: pnpm db:migrate:deploy
+
+      - name: Schema matches migrations
+        run: pnpm exec prisma migrate diff --from-config-datasource --to-schema schema.prisma --exit-code
+
+      - name: Production seed guard refuses demo data
+        run: |
+          if NODE_ENV=production pnpm db:seed; then
+            echo "seed.ts ran under NODE_ENV=production without SEED_DEMO=true" >&2
+            exit 1
+          fi
+
+      - name: Seed demo data (twice, to check it is idempotent)
+        env:
+          NODE_ENV: production
+          SEED_DEMO: "true"
+        run: |
+          pnpm db:seed
+          pnpm db:seed
+
+      - name: Create first admin (twice, to check it is idempotent)
+        env:
+          ADMIN_EMAIL: ci-admin@example.com
+          ADMIN_PASSWORD: ci-admin-password-123
+          ADMIN_NAME: CI Admin
+        run: |
+          pnpm admin:create
+          pnpm admin:create
+          pnpm admin:create --reset-password

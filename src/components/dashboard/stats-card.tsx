@@ -1,9 +1,15 @@
 import {
   BookOpen,
   Clock3,
+  CreditCard,
   Flame,
+  GraduationCap,
+  Layers,
+  Library,
   ListChecks,
+  Star,
   TrendingUp,
+  Users,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -33,6 +39,13 @@ const icons: Record<string, LucideIcon> = {
   hours: Clock3,
   due: ListChecks,
   revenue: Wallet,
+  users: Users,
+  courses: Library,
+  instructors: GraduationCap,
+  payments: CreditCard,
+  students: Users,
+  lessons: Layers,
+  reviews: Star,
 };
 
 type StatsCardProps = {

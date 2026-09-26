@@ -1,7 +1,14 @@
-# Allow dependency install scripts on CI/VPS (pnpm 10+).
-# Without this, `pnpm install` asks for `pnpm approve-builds`.
-dangerouslyAllowAllBuilds: true
+# pnpm 10 skips dependency install scripts unless they are allowed here.
+# prisma / @prisma/engines fetch the schema engine that `prisma migrate` needs;
+# esbuild (used by tsx) verifies its native binary.
+onlyBuiltDependencies:
+  - "@prisma/engines"
+  - esbuild
+  - prisma
 
+# Not needed: sharp and unrs-resolver ship prebuilt binaries, core-js only
+# prints a banner. Listed so pnpm doesn't warn about them.
 ignoredBuiltDependencies:
+  - core-js
   - sharp
   - unrs-resolver

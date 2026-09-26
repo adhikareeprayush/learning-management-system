@@ -2,26 +2,34 @@
   "name": "lms-system",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.12.1",
   "scripts": {
     "dev": "NODE_OPTIONS='--dns-result-order=ipv4first' next dev --port 3005",
     "build": "next build --webpack",
-    "vercel-build": "prisma generate && next build --webpack",
+    "vercel-build": "prisma generate && if [ \"$VERCEL_ENV\" = production ]; then prisma migrate deploy; fi && next build --webpack",
     "start": "next start --port 3005",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "NODE_OPTIONS='--dns-result-order=ipv4first' tsx seed.ts",
+    "admin:create": "NODE_OPTIONS='--dns-result-order=ipv4first' tsx scripts/create-admin.ts",
     "db:studio": "prisma studio",
     "assets:sync-imagekit": "tsx scripts/sync-imagekit-assets.ts",
     "imagekit:verify": "tsx scripts/verify-imagekit.ts",
     "youtube:verify": "tsx scripts/verify-youtube.ts",
+    "email:test": "tsx scripts/send-test-email.ts",
     "youtube:setup": "tsx scripts/youtube-oauth-setup.ts",
     "docker:up": "docker compose up -d db",
-    "docker:web": "docker compose up -d web",
+    "docker:web": "docker compose up -d --build web",
+    "docker:mail": "docker compose up -d mail",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f db",
-    "docker:dev": "docker compose up -d db && pnpm db:migrate:deploy && pnpm db:seed && pnpm dev"
+    "docker:dev": "docker compose up -d db && pnpm db:migrate:deploy && pnpm db:seed && pnpm dev",
+    "postinstall": "prisma generate"
   },
   "prisma": {
     "seed": "tsx seed.ts"
@@ -41,6 +49,7 @@
     "jspdf": "^4.2.1",
     "lucide-react": "^1.27.0",
     "next": "16.2.12",
+    "nodemailer": "^10.0.10",
     "pdf-lib": "^1.17.1",
     "pg": "^8.22.0",
     "react": "19.2.4",
@@ -51,6 +60,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -60,6 +70,7 @@
     "prisma": "^7.9.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.1",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.11"
   }
 }

@@ -17,17 +17,16 @@ export function CourseForm() {
   const [category, setCategory] = useState<string>(COURSE_CATEGORIES[0]);
   const [description, setDescription] = useState("");
   const [priceNpr, setPriceNpr] = useState("");
-  const [priceUsd, setPriceUsd] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const prices = parseCoursePriceInput({ npr: priceNpr, usd: priceUsd });
+  const price = parseCoursePriceInput(priceNpr);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!prices.ok) {
-      setError(prices.error);
+    if (!price.ok) {
+      setError(price.error);
       return;
     }
     setSaving(true);
@@ -40,8 +39,7 @@ export function CourseForm() {
           title,
           category,
           description,
-          price: prices.price,
-          priceNpr: prices.priceNpr,
+          priceNpr: price.priceNpr,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -67,6 +65,7 @@ export function CourseForm() {
         <span className="mb-1.5 block text-sm font-medium">Title</span>
         <input
           required
+          maxLength={200}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Untitled course"
@@ -88,50 +87,33 @@ export function CourseForm() {
       <label className="block">
         <span className="mb-1.5 block text-sm font-medium">Description</span>
         <textarea
+          maxLength={5000}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="Short pitch for learners…"
           className={`min-h-28 ${inputClass}`}
         />
       </label>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-medium">Price (NPR)</span>
-          <input
-            type="number"
-            min="0"
-            step="1"
-            inputMode="numeric"
-            value={priceNpr}
-            onChange={(e) => setPriceNpr(e.target.value)}
-            placeholder="0 = free"
-            className={inputClass}
-          />
-          <span className="mt-1 block text-xs text-muted">
-            In rupees. Leave empty or 0 for a free course; paid courses start at Rs 10.
-          </span>
-        </label>
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-medium">List price (USD, optional)</span>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            inputMode="decimal"
-            value={priceUsd}
-            onChange={(e) => setPriceUsd(e.target.value)}
-            placeholder="0.00"
-            className={inputClass}
-          />
-          <span className="mt-1 block text-xs text-muted">
-            Only charged (converted to NPR) when no NPR price is set.
-          </span>
-        </label>
-      </div>
+      <label className="block">
+        <span className="mb-1.5 block text-sm font-medium">Price (NPR)</span>
+        <input
+          type="number"
+          min="0"
+          step="1"
+          inputMode="numeric"
+          value={priceNpr}
+          onChange={(e) => setPriceNpr(e.target.value)}
+          placeholder="0 = free"
+          className={inputClass}
+        />
+        <span className="mt-1 block text-xs text-muted">
+          In rupees. Leave empty or 0 for a free course; paid courses start at Rs 10.
+        </span>
+      </label>
       <p className="text-sm text-muted">
         Students pay:{" "}
         <strong className="text-brand-navy">
-          {prices.ok ? formatCoursePrice(prices) : "—"}
+          {price.ok ? formatCoursePrice(price) : "—"}
         </strong>
       </p>
       <div className="flex flex-col gap-2 sm:flex-row">

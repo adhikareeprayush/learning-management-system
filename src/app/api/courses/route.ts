@@ -1,25 +1,21 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { jsonError, requireTeacherApi, requireTenantApi } from "@/lib/api";
-import type { CatalogApiCourse } from "@/lib/catalog-filters";
-import {
-  coursePaymentAmountPaisa,
-  courseRequiresPayment,
-  formatCoursePrice,
-} from "@/lib/pricing";
+import { listCatalogCourses } from "@/lib/catalog";
+import { COURSE_CATEGORIES } from "@/lib/course-categories";
+import { boundedText, readJsonObject } from "@/lib/course-access";
+import { MIN_PAID_NPR_PAISA } from "@/lib/pricing";
 
 // Stays well below Postgres int4 max so a typo can't overflow the column.
 const MAX_MINOR_UNITS = 1_000_000_000;
 
-function formatDuration(minutes: number) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h <= 0) return `${m}m`;
-  return `${h}h ${m.toString().padStart(2, "0")}m`;
-}
+// Same limits as PATCH /api/courses/[courseId].
+const TITLE_MAX = 200;
+const DESCRIPTION_MAX = 5_000;
+const OUTCOME_MAX = 300;
+const MAX_OUTCOMES = 20;
 
-/** Prices are integer minor units (cents / paisa); anything else is rejected. */
+/** Prices are integer paisa; anything else is rejected. */
 function parseMinorUnits(value: unknown) {
   if (value === undefined || value === null || value === "") return 0;
   return typeof value === "number" &&
@@ -30,84 +26,39 @@ function parseMinorUnits(value: unknown) {
     : null;
 }
 
+function parseOutcomes(
+  value: unknown,
+): { ok: true; value: string[] } | { ok: false; error: string } {
+  if (value === undefined || value === null) return { ok: true, value: [] };
+  if (!Array.isArray(value)) return { ok: false, error: "outcomes must be a list" };
+  const outcomes = value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+  if (outcomes.length > MAX_OUTCOMES) {
+    return { ok: false, error: `Add at most ${MAX_OUTCOMES} learning outcomes` };
+  }
+  if (outcomes.some((item) => item.length > OUTCOME_MAX)) {
+    return {
+      ok: false,
+      error: `Each learning outcome must be at most ${OUTCOME_MAX} characters`,
+    };
+  }
+  return { ok: true, value: outcomes };
+}
+
 export async function GET(request: Request) {
   try {
     const tenant = await requireTenantApi();
     if (tenant instanceof Response) return tenant;
 
     const { searchParams } = new URL(request.url);
-    const featured = searchParams.get("featured") === "true";
-    const q = searchParams.get("q")?.trim().toLowerCase();
-    const category = searchParams.get("category")?.trim();
-
-    const courses = await prisma.course.findMany({
-      where: {
-        organizationId: tenant.organizationId,
-        status: "PUBLISHED",
-        ...(featured ? { featured: true } : {}),
-        ...(category ? { category } : {}),
-        ...(q
-          ? {
-              OR: [
-                { title: { contains: q, mode: "insensitive" } },
-                { description: { contains: q, mode: "insensitive" } },
-                { category: { contains: q, mode: "insensitive" } },
-              ],
-            }
-          : {}),
-      },
-      orderBy: [{ featured: "desc" }, { createdAt: "desc" }],
-      include: {
-        instructor: { select: { id: true, name: true } },
-        _count: {
-          select: { enrollments: true, lessons: true, reviews: true },
-        },
-      },
+    const courses = await listCatalogCourses(tenant.organizationId, {
+      featured: searchParams.get("featured") === "true",
+      q: searchParams.get("q") ?? undefined,
+      category: searchParams.get("category")?.trim() || undefined,
     });
 
-    const ratings = courses.length
-      ? await prisma.review.groupBy({
-          by: ["courseId"],
-          where: { courseId: { in: courses.map((course) => course.id) } },
-          _avg: { rating: true },
-        })
-      : [];
-    const averageByCourse = new Map(
-      ratings.map((row) => [row.courseId, row._avg.rating]),
-    );
-
-    const data = courses.map((course): CatalogApiCourse => {
-      const average = averageByCourse.get(course.id);
-      return {
-        id: course.id,
-        slug: course.slug,
-        title: course.title,
-        description: course.description,
-        category: course.category,
-        image: resolveMediaUrl(course.thumbnail),
-        instructor: course.instructor.name,
-        instructorId: course.instructor.id,
-        level: course.level,
-        price: formatCoursePrice(course),
-        pricePaisa: courseRequiresPayment(course)
-          ? coursePaymentAmountPaisa(course)
-          : 0,
-        duration: formatDuration(course.duration),
-        students: `${course._count.enrollments.toLocaleString()} Students`,
-        studentCount: course._count.enrollments,
-        lessonCount: course._count.lessons,
-        featured: course.featured,
-        outcomes: course.outcomes,
-        averageRating:
-          course._count.reviews > 0 && average != null
-            ? Math.round(average * 10) / 10
-            : null,
-        reviewCount: course._count.reviews,
-        createdAt: course.createdAt.toISOString(),
-      };
-    });
-
-    return NextResponse.json({ courses: data });
+    return NextResponse.json({ courses });
   } catch (error) {
     console.error("GET /api/courses", error);
     return jsonError("Internal server error", 500);
@@ -119,32 +70,41 @@ export async function POST(request: Request) {
     const auth = await requireTeacherApi();
     if (auth instanceof Response) return auth;
 
-    const body = await request.json().catch(() => null);
-    if (!body || typeof body !== "object") {
-      return jsonError("Invalid JSON body", 400);
-    }
-    const title = String(body.title ?? "").trim();
-    const description = String(body.description ?? "").trim();
-    const category = String(body.category ?? "General").trim();
+    const body = await readJsonObject(request);
+    if (body instanceof Response) return body;
 
-    if (!title) {
-      return jsonError("title is required", 400);
-    }
+    const title = boundedText(body.title, "title", TITLE_MAX, { required: true });
+    if (!title.ok) return jsonError(title.error, 400);
 
-    const price = parseMinorUnits(body.price);
-    if (price === null) {
-      return jsonError("price must be a whole number of cents (0 or more)", 400);
-    }
+    const description = boundedText(body.description, "description", DESCRIPTION_MAX);
+    if (!description.ok) return jsonError(description.error, 400);
 
-    const priceNpr = parseMinorUnits(body.priceNpr);
-    if (priceNpr === null || (priceNpr > 0 && priceNpr < 1000)) {
+    if (body.category !== undefined && body.category !== null && typeof body.category !== "string") {
+      return jsonError("category must be text", 400);
+    }
+    const categoryInput = typeof body.category === "string" ? body.category.trim() : "";
+    if (
+      categoryInput &&
+      !(COURSE_CATEGORIES as readonly string[]).includes(categoryInput)
+    ) {
       return jsonError(
-        "priceNpr must be 0 (free) or at least 1000 paisa (Rs 10)",
+        `category must be one of: ${COURSE_CATEGORIES.join(", ")}`,
         400,
       );
     }
 
-    const baseSlug = title
+    const outcomes = parseOutcomes(body.outcomes);
+    if (!outcomes.ok) return jsonError(outcomes.error, 400);
+
+    const priceNpr = parseMinorUnits(body.priceNpr);
+    if (priceNpr === null || (priceNpr > 0 && priceNpr < MIN_PAID_NPR_PAISA)) {
+      return jsonError(
+        `priceNpr must be 0 (free) or at least ${MIN_PAID_NPR_PAISA} paisa (Rs ${MIN_PAID_NPR_PAISA / 100})`,
+        400,
+      );
+    }
+
+    const baseSlug = title.value
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "")
@@ -154,16 +114,17 @@ export async function POST(request: Request) {
     const course = await prisma.course.create({
       data: {
         organizationId: auth.organizationId,
-        title,
-        description: description || null,
-        category,
+        title: title.value,
+        description: description.value || null,
+        category: categoryInput || null,
         slug,
-        price,
+        // Courses are sold in NPR only; the legacy `price` column stays 0.
+        price: 0,
         priceNpr,
         instructorId: auth.session.user.id,
         status: "DRAFT",
         level: "BEGINNER",
-        outcomes: [],
+        outcomes: outcomes.value,
       },
     });
 

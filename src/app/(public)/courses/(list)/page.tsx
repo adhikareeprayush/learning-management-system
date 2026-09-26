@@ -1,47 +1,25 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, BookOpen, Sparkles, Users } from "lucide-react";
 import { CoursesCatalog } from "@/components/course/courses-catalog";
-import { prisma } from "@/lib/db";
-import { resolveMediaUrl } from "@/lib/imagekit-url";
-import { formatCoursePrice } from "@/lib/pricing";
+import { listCatalogCourses } from "@/lib/catalog";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
+
+export const metadata: Metadata = {
+  title: "Courses",
+  description:
+    "Browse self-paced courses by topic, level, and price. Try free preview lessons, then enroll free or with a one-time NPR payment.",
+  alternates: { canonical: "/courses" },
+};
 
 export default async function CoursesPage() {
   const ctx = await resolveTenantFromHeaders();
-  if (!ctx) {
-    return (
-      <div className="mx-auto max-w-lg px-5 py-20 text-center">
-        <h1 className="font-display text-2xl text-brand-navy">
-          Catalog unavailable
-        </h1>
-        <p className="mt-3 text-muted">
-          Run <code className="rounded bg-surface px-1.5 py-0.5 text-sm">pnpm db:seed</code>{" "}
-          to create the default institute, then refresh.
-        </p>
-      </div>
-    );
-  }
-
-  const orgFilter = { organizationId: ctx.organizationId };
-
-  const [total, featured] = await Promise.all([
-    prisma.course.count({ where: { status: "PUBLISHED", ...orgFilter } }),
-    prisma.course.findMany({
-      where: { status: "PUBLISHED", featured: true, ...orgFilter },
-      take: 3,
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        slug: true,
-        title: true,
-        price: true,
-        priceNpr: true,
-        thumbnail: true,
-      },
-    }),
-  ]);
+  const courses = ctx ? await listCatalogCourses(ctx.organizationId) : [];
+  // Catalog order puts featured courses first, newest first.
+  const featured = courses.filter((course) => course.featured).slice(0, 3);
+  const total = courses.length;
 
   return (
     <div className="bg-[#f7f8fc] pb-16 sm:pb-20">
@@ -56,34 +34,37 @@ export default async function CoursesPage() {
               <span className="truncate">Course catalog</span>
             </p>
             <h1 className="mt-3 font-display text-[1.85rem] leading-[1.15] sm:mt-4 sm:text-4xl md:text-5xl lg:text-[56px] lg:leading-tight">
-              Courses from the{" "}
-              <span className="text-brand-mint">live catalog</span>
+              Find your next{" "}
+              <span className="text-brand-mint">course</span>
             </h1>
             <p className="mt-3 max-w-lg text-base leading-relaxed text-white/80 sm:mt-4 sm:text-lg">
-              Filter by topic, level, and price. Every listing is loaded from
-              PostgreSQL — enrollments, modules, and reviews included.
+              Filter by topic, level, and price. Watch free preview lessons
+              before you enroll, and earn a certificate when you finish.
             </p>
             <div className="mt-6 flex flex-col gap-3 text-sm text-white/90 sm:mt-8 sm:flex-row sm:flex-wrap sm:gap-6">
               <div className="flex items-center gap-2">
                 <Users className="size-4 shrink-0 text-brand-mint" />
                 <span>
-                  <strong className="text-white">{total}</strong> live listings
+                  <strong className="text-white">{total}</strong> course
+                  {total === 1 ? "" : "s"}
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <Sparkles className="size-4 shrink-0 text-brand-mint" />
                 <span>
                   <strong className="text-white">{featured.length}</strong> editor
-                  picks
+                  pick{featured.length === 1 ? "" : "s"}
                 </span>
               </div>
             </div>
           </div>
 
           <div className="min-w-0 lg:w-full">
-            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-brand-mint lg:hidden">
-              Editor picks
-            </p>
+            {featured.length > 0 ? (
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-brand-mint lg:hidden">
+                Editor picks
+              </p>
+            ) : null}
             <div className="-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-1 sm:-mx-0 sm:px-0 lg:mx-0 lg:grid lg:snap-none lg:grid-cols-1 lg:gap-3 lg:overflow-visible lg:pb-0">
               {featured.map((course, i) => (
                 <Link
@@ -92,7 +73,7 @@ export default async function CoursesPage() {
                   className="group flex w-[min(85vw,300px)] shrink-0 snap-start items-center gap-3 rounded-2xl border border-white/15 bg-white/10 p-3 backdrop-blur-md transition hover:bg-white/15 sm:w-[min(70vw,280px)] lg:w-auto lg:shrink"
                 >
                   <Image
-                    src={resolveMediaUrl(course.thumbnail)}
+                    src={course.image}
                     alt=""
                     width={64}
                     height={64}
@@ -106,7 +87,7 @@ export default async function CoursesPage() {
                       {course.title}
                     </p>
                     <p className="mt-0.5 text-xs text-white/70">
-                      {formatCoursePrice(course)}
+                      {course.price}
                     </p>
                   </div>
                   <ArrowRight className="hidden size-4 shrink-0 text-white/50 opacity-0 transition group-hover:opacity-100 sm:block" />
@@ -124,7 +105,7 @@ export default async function CoursesPage() {
           </div>
         }
       >
-        <CoursesCatalog />
+        <CoursesCatalog initialCourses={courses} />
       </Suspense>
     </div>
   );

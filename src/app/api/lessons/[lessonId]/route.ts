@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { cleanString, finiteNumber, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
-import { findManagedCourse, syncCourseDuration } from "@/lib/course-access";
+import { finiteNumber, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import {
+  boundedText,
+  findManagedCourse,
+  readJsonObject,
+  recalculateCourseProgress,
+  syncCourseDuration,
+} from "@/lib/course-access";
 import { maybeIssueCertificate } from "@/lib/certificates";
 import { redactResourceForLearner } from "@/lib/lesson-resources";
 import { resolveLearnerMember } from "@/lib/membership";
+import { parseMediaUrl } from "@/lib/media-url";
 
 type Params = { params: Promise<{ lessonId: string }> };
 
@@ -104,7 +111,8 @@ export async function PATCH(request: Request, { params }: Params) {
     if (!session) return jsonError("Unauthorized", 401);
 
     const { lessonId } = await params;
-    const body = await request.json();
+    const body = await readJsonObject(request);
+    if (body instanceof Response) return body;
 
     const lesson = await prisma.lesson.findUnique({
       where: { id: lessonId },
@@ -112,6 +120,7 @@ export async function PATCH(request: Request, { params }: Params) {
         id: true,
         courseId: true,
         moduleId: true,
+        videoUrl: true,
         course: { select: { organizationId: true } },
       },
     });
@@ -131,23 +140,41 @@ export async function PATCH(request: Request, { params }: Params) {
       ) {
         return jsonError("Lesson not found", 404);
       }
-      if (body.moduleId) {
+      const title = boundedText(body.title, "title", 200, { required: body.title !== undefined });
+      if (!title.ok) return jsonError(title.error, 400);
+      const summary = boundedText(body.summary, "summary", 2_000);
+      if (!summary.ok) return jsonError(summary.error, 400);
+      const content = boundedText(body.content, "content", 100_000);
+      if (!content.ok) return jsonError(content.error, 400);
+      // Only a changed video URL is validated, so older stored links keep saving.
+      let videoUrl: string | null | undefined;
+      if (body.videoUrl !== undefined && body.videoUrl !== lesson.videoUrl) {
+        const parsed = parseMediaUrl(body.videoUrl, "video");
+        if (!parsed.ok) return jsonError(parsed.error, 400);
+        videoUrl = parsed.url;
+      }
+      const rawModuleId = body.moduleId;
+      if (rawModuleId !== undefined && rawModuleId !== null && typeof rawModuleId !== "string") {
+        return jsonError("moduleId must be a module id or null", 400);
+      }
+      const moduleId = rawModuleId === undefined ? undefined : rawModuleId || null;
+      if (moduleId) {
         const courseModule = await prisma.module.findFirst({
-          where: { id: String(body.moduleId), courseId: lesson.courseId },
+          where: { id: moduleId, courseId: lesson.courseId },
         });
         if (!courseModule) return jsonError("Module not found in this course", 400);
       }
       const updated = await prisma.lesson.update({
         where: { id: lesson.id },
         data: {
-          ...(body.title !== undefined ? { title: cleanString(body.title, 200) } : {}),
-          ...(body.content !== undefined ? { content: cleanString(body.content, 100_000) || null } : {}),
-          ...(body.summary !== undefined ? { summary: cleanString(body.summary, 2_000) || null } : {}),
-          ...(body.videoUrl !== undefined ? { videoUrl: cleanString(body.videoUrl, 2_000) || null } : {}),
-          ...(body.moduleId !== undefined ? { moduleId: body.moduleId ? String(body.moduleId) : null } : {}),
+          ...(body.title !== undefined ? { title: title.value } : {}),
+          ...(body.content !== undefined ? { content: content.value || null } : {}),
+          ...(body.summary !== undefined ? { summary: summary.value || null } : {}),
+          ...(videoUrl !== undefined ? { videoUrl } : {}),
+          ...(moduleId !== undefined ? { moduleId } : {}),
           ...(body.duration !== undefined ? { duration: Math.max(0, Math.round(finiteNumber(body.duration))) } : {}),
           ...(body.isFree !== undefined ? { isFree: Boolean(body.isFree) } : {}),
-          ...(Number.isInteger(body.order) && body.order >= 0 ? { order: body.order } : {}),
+          ...(typeof body.order === "number" && Number.isInteger(body.order) && body.order >= 0 ? { order: body.order } : {}),
         },
       });
       if (body.duration !== undefined) await syncCourseDuration(lesson.courseId);
@@ -255,5 +282,6 @@ export async function DELETE(_request: Request, { params }: Params) {
   }
   await prisma.lesson.delete({ where: { id: lesson.id } });
   await syncCourseDuration(lesson.courseId);
+  await recalculateCourseProgress(lesson.courseId);
   return new Response(null, { status: 204 });
 }

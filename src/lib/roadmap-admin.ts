@@ -5,6 +5,8 @@ import type {
   RoadmapStatus,
 } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { enrollUserInCourse } from "@/lib/enrollments";
+import { parseMediaUrl } from "@/lib/media-url";
 import { recalculateRoadmapProgress } from "@/lib/roadmaps";
 
 export const ROADMAP_STATUSES: readonly RoadmapStatus[] = [
@@ -92,7 +94,13 @@ export type RoadmapInput = {
 };
 
 export type RoadmapMutationResult =
-  | { ok: true; roadmap: AdminRoadmapDetail; coursesChanged: boolean }
+  | {
+      ok: true;
+      roadmap: AdminRoadmapDetail;
+      coursesChanged: boolean;
+      /** Courses linked by this update that weren't on the roadmap before. */
+      addedCourseIds: string[];
+    }
   | { ok: false; error: string; status: number };
 
 type ParseResult =
@@ -236,16 +244,10 @@ export function parseRoadmapInput(
   }
 
   if (body.thumbnail !== undefined) {
+    // Checked against allowed upload hosts in create/update (see coverUrl).
     const result = nullableText(body.thumbnail, "thumbnail", THUMBNAIL_MAX);
     if (!result.ok) return result;
-    const url = result.value;
-    if (url && !/^https?:\/\/\S+$/i.test(url) && !/^\/(?!\/)\S*$/.test(url)) {
-      return {
-        ok: false,
-        error: "thumbnail must be an http(s) URL or a site path starting with /",
-      };
-    }
-    input.thumbnail = url;
+    input.thumbnail = result.value;
   }
 
   if (body.level !== undefined) {
@@ -432,6 +434,17 @@ class MutationError extends Error {
   }
 }
 
+/**
+ * Covers must be files uploaded here (or bundled /images/). An unchanged
+ * value is kept as-is so covers saved before this rule still save.
+ */
+function coverUrl(value: string | null, current: string | null = null) {
+  if (value === current) return value;
+  const parsed = parseMediaUrl(value, "image");
+  if (!parsed.ok) throw new MutationError(`Cover image: ${parsed.error}`, 400);
+  return parsed.url;
+}
+
 export async function listAdminRoadmaps(
   organizationId: string,
 ): Promise<AdminRoadmapSummary[]> {
@@ -519,7 +532,7 @@ export async function createRoadmap(
           title,
           slug,
           description: input.description ?? null,
-          thumbnail: input.thumbnail ?? null,
+          thumbnail: coverUrl(input.thumbnail ?? null),
           category: input.category ?? null,
           level: input.level ?? "BEGINNER",
           status,
@@ -533,7 +546,12 @@ export async function createRoadmap(
         include: detailInclude,
       });
     });
-    return { ok: true, roadmap: toAdminDetail(roadmap), coursesChanged: false };
+    return {
+      ok: true,
+      roadmap: toAdminDetail(roadmap),
+      coursesChanged: false,
+      addedCourseIds: [],
+    };
   } catch (error) {
     if (error instanceof MutationError) {
       return { ok: false, error: error.message, status: error.status };
@@ -561,7 +579,9 @@ export async function updateRoadmap(
       const data: Prisma.RoadmapUpdateInput = {};
       if (input.title !== undefined) data.title = input.title;
       if (input.description !== undefined) data.description = input.description;
-      if (input.thumbnail !== undefined) data.thumbnail = input.thumbnail;
+      if (input.thumbnail !== undefined) {
+        data.thumbnail = coverUrl(input.thumbnail, existing.thumbnail);
+      }
       if (input.category !== undefined) data.category = input.category;
       if (input.level !== undefined) data.level = input.level;
       if (input.status !== undefined) data.status = input.status;
@@ -589,15 +609,16 @@ export async function updateRoadmap(
       const finalStatus = input.status ?? existing.status;
       const publishing = input.status === "PUBLISHED" && existing.status !== "PUBLISHED";
       let coursesChanged = false;
+      let addedCourseIds: string[] = [];
 
       if (input.courseIds !== undefined) {
         const resolved = await resolveCourses(tx, organizationId, input.courseIds);
         if (!resolved.ok) throw new MutationError(resolved.error, 400);
 
         const before = new Set(existing.courses.map((item) => item.courseId));
+        addedCourseIds = input.courseIds.filter((id) => !before.has(id));
         coursesChanged =
-          before.size !== input.courseIds.length ||
-          input.courseIds.some((id) => !before.has(id));
+          before.size !== input.courseIds.length || addedCourseIds.length > 0;
 
         // Only guard transitions, so a plain edit of a published roadmap
         // isn't blocked by a course that was unpublished elsewhere.
@@ -639,13 +660,14 @@ export async function updateRoadmap(
         data,
         include: detailInclude,
       });
-      return { roadmap, coursesChanged };
+      return { roadmap, coursesChanged, addedCourseIds };
     });
 
     return {
       ok: true,
       roadmap: toAdminDetail(result.roadmap),
       coursesChanged: result.coursesChanged,
+      addedCourseIds: result.addedCourseIds,
     };
   } catch (error) {
     if (error instanceof MutationError) {
@@ -697,6 +719,46 @@ export async function deleteRoadmap(
     };
   }
   return { ok: true };
+}
+
+/**
+ * After courses change: learners already on the roadmap get the newly added
+ * published courses they can take for free (or already paid for) — paid ones
+ * stay a "Buy" step — then every learner's stored progress is recalculated.
+ */
+export async function syncRoadmapLearners(
+  organizationId: string,
+  roadmapId: string,
+  addedCourseIds: string[],
+) {
+  const addedCourses = addedCourseIds.length
+    ? await prisma.course.findMany({
+        where: { id: { in: addedCourseIds }, organizationId, status: "PUBLISHED" },
+        select: { id: true },
+      })
+    : [];
+  const enrollments = addedCourses.length
+    ? await prisma.roadmapEnrollment.findMany({
+        where: { roadmapId },
+        select: { studentId: true },
+      })
+    : [];
+
+  for (const { studentId } of enrollments) {
+    for (const course of addedCourses) {
+      try {
+        // A 402 (payment required) result simply leaves the course to buy.
+        await enrollUserInCourse(studentId, null, course.id, organizationId);
+      } catch (error) {
+        console.error(
+          `[roadmap-admin] enrolling ${studentId} in ${course.id} for ${roadmapId} failed`,
+          error,
+        );
+      }
+    }
+  }
+
+  await recalculateRoadmapEnrollments(roadmapId);
 }
 
 /** Stored enrollment progress goes stale when the course set changes. */

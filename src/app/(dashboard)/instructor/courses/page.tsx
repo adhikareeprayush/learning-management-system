@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, BookOpen } from "lucide-react";
@@ -5,6 +6,7 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { ProgressBar } from "@/components/dashboard/progress-bar";
 import { Button } from "@/components/ui/button";
 import { prisma } from "@/lib/db";
+import { pluralize } from "@/lib/format";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { requireInstructorPage } from "@/lib/page-guards";
 import { formatCoursePrice } from "@/lib/pricing";
@@ -15,6 +17,8 @@ function statusLabel(status: string) {
   if (status === "ARCHIVED") return "Archived";
   return "Draft";
 }
+
+export const metadata: Metadata = { title: "Courses" };
 
 export default async function InstructorCoursesPage() {
   const session = await requireInstructorPage();
@@ -94,14 +98,14 @@ export default async function InstructorCoursesPage() {
                           : "bg-amber-50 text-amber-800"
                       }`}
                     >
-                      {label}
+                      {course.status === "DRAFT" && course.reviewNote ? "Changes requested" : label}
                     </span>
                   </div>
                   <h2 className="mt-1 text-base font-semibold text-[#324361]">
                     {course.title}
                   </h2>
                   <p className="mt-1 text-sm text-muted">
-                    {course._count.enrollments.toLocaleString()} students ·{" "}
+                    {pluralize(course._count.enrollments, "student")} ·{" "}
                     {formatCoursePrice(course)}
                   </p>
                   <div className="mt-4">

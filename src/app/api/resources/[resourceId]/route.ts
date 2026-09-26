@@ -1,15 +1,19 @@
 import type { OrganizationMember } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import {
-  cleanString,
   isTeacher,
   jsonError,
   requireSession,
   requireTenantApi,
   type AppSession,
 } from "@/lib/api";
-import { canAccessLesson, findLessonForTeacher } from "@/lib/course-access";
-import { redactResourceForLearner } from "@/lib/lesson-resources";
+import {
+  boundedText,
+  canAccessLesson,
+  findLessonForTeacher,
+  readJsonObject,
+} from "@/lib/course-access";
+import { parseResourceUrl, redactResourceForLearner } from "@/lib/lesson-resources";
 
 type Params = { params: Promise<{ resourceId: string }> };
 
@@ -26,23 +30,18 @@ async function getResource(resourceId: string, organizationId: string) {
   return resource;
 }
 
-async function teacherCanManage(
+/** The resource when this user may author it, otherwise null. */
+async function findManagedResource(
   resourceId: string,
   organizationId: string,
   session: AppSession,
   member: OrganizationMember | null,
 ) {
-  if (!isTeacher(session, member)) return false;
+  if (!isTeacher(session, member)) return null;
   const resource = await getResource(resourceId, organizationId);
-  if (!resource) return false;
-  return Boolean(
-    await findLessonForTeacher(
-      resource.lessonId,
-      organizationId,
-      session,
-      member,
-    ),
-  );
+  if (!resource) return null;
+  const lesson = await findLessonForTeacher(resource.lessonId, organizationId, session, member);
+  return lesson ? resource : null;
 }
 
 export async function GET(_request: Request, { params }: Params) {
@@ -66,11 +65,8 @@ export async function GET(_request: Request, { params }: Params) {
     return jsonError("Forbidden", 403);
   }
 
-  const canManage = await teacherCanManage(
-    resource.id,
-    tenant.organizationId,
-    session,
-    tenant.member,
+  const canManage = Boolean(
+    await findManagedResource(resource.id, tenant.organizationId, session, tenant.member),
   );
 
   const latestAttempt = canManage
@@ -98,20 +94,35 @@ export async function PATCH(request: Request, { params }: Params) {
   if (!isTeacher(session, tenant.member)) return jsonError("Forbidden", 403);
 
   const { resourceId } = await params;
-  if (!(await teacherCanManage(resourceId, tenant.organizationId, session, tenant.member))) {
-    return jsonError("Resource not found", 404);
+  const resource = await findManagedResource(
+    resourceId,
+    tenant.organizationId,
+    session,
+    tenant.member,
+  );
+  if (!resource) return jsonError("Resource not found", 404);
+
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+  const title = boundedText(body.title, "title", 200, { required: body.title !== undefined });
+  if (!title.ok) return jsonError(title.error, 400);
+  const description = boundedText(body.description, "description", 50_000);
+  if (!description.ok) return jsonError(description.error, 400);
+  // Only a changed URL is validated, so older stored links keep saving.
+  let url: string | undefined;
+  if (body.url !== undefined && body.url !== resource.url) {
+    const parsed = parseResourceUrl(resource.type, body.url);
+    if (!parsed.ok) return jsonError(parsed.error, 400);
+    url = parsed.url ?? "";
   }
 
-  const body = await request.json();
   const updated = await prisma.lessonResource.update({
     where: { id: resourceId },
     data: {
-      ...(body.title !== undefined
-        ? { title: cleanString(body.title, 200) }
-        : {}),
-      ...(body.url !== undefined ? { url: cleanString(body.url, 2_000) } : {}),
+      ...(body.title !== undefined ? { title: title.value } : {}),
+      ...(url !== undefined ? { url } : {}),
       ...(body.description !== undefined
-        ? { description: cleanString(body.description, 50_000) || null }
+        ? { description: description.value || null }
         : {}),
     },
   });
@@ -128,7 +139,7 @@ export async function DELETE(_request: Request, { params }: Params) {
   if (!isTeacher(session, tenant.member)) return jsonError("Forbidden", 403);
 
   const { resourceId } = await params;
-  if (!(await teacherCanManage(resourceId, tenant.organizationId, session, tenant.member))) {
+  if (!(await findManagedResource(resourceId, tenant.organizationId, session, tenant.member))) {
     return jsonError("Resource not found", 404);
   }
 

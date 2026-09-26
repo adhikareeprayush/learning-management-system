@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -5,12 +6,16 @@ import { ArrowRight, Award, Map, Route } from "lucide-react";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { ProgressBar } from "@/components/dashboard/progress-bar";
 import { getServerSession } from "@/lib/auth";
-import { formatLevel, listPublishedRoadmaps } from "@/lib/roadmaps";
+import { formatLevel, pluralize } from "@/lib/format";
+import { listPublishedRoadmaps } from "@/lib/roadmaps";
 import { requireTenantContext } from "@/lib/tenant";
+import { loginRedirectPath } from "@/lib/page-guards";
+
+export const metadata: Metadata = { title: "Roadmaps" };
 
 export default async function StudentRoadmapsPage() {
   const session = await getServerSession();
-  if (!session) redirect("/login");
+  if (!session) redirect(await loginRedirectPath());
 
   const ctx = await requireTenantContext();
   const all = await listPublishedRoadmaps(ctx.organizationId, session.user.id);
@@ -85,10 +90,10 @@ export default async function StudentRoadmapsPage() {
                     ) : null}
                   </div>
                   <p className="mt-0.5 text-xs text-muted">
-                    {formatLevel(roadmap.level)} · {roadmap.courseCount} courses
+                    {formatLevel(roadmap.level)} · {pluralize(roadmap.courseCount, "course")}
                   </p>
                   <div className="mt-3 max-w-sm">
-                    <ProgressBar value={roadmap.progress} />
+                    <ProgressBar value={roadmap.progress} label="Path progress" />
                   </div>
                 </div>
               </div>
@@ -121,7 +126,7 @@ export default async function StudentRoadmapsPage() {
                       {roadmap.title}
                     </p>
                     <p className="text-xs text-muted">
-                      {roadmap.courseCount} courses · ~{roadmap.estimatedHours}h
+                      {pluralize(roadmap.courseCount, "course")} · ~{roadmap.estimatedHours}h
                     </p>
                   </div>
                   <ArrowRight className="size-4 shrink-0 text-muted" />

@@ -1,4 +1,5 @@
 import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import { staffEnrollBlock } from "@/lib/enrollments";
 import { enrollUserInRoadmap } from "@/lib/roadmaps";
 
 export async function POST(request: Request) {
@@ -12,6 +13,13 @@ export async function POST(request: Request) {
   const roadmapId =
     typeof body.roadmapId === "string" ? body.roadmapId.trim() : "";
   if (!roadmapId) return jsonError("roadmapId is required", 400);
+
+  const staff = await staffEnrollBlock(
+    session.user,
+    { kind: "roadmap", id: roadmapId },
+    tenant.organizationId,
+  );
+  if (staff) return Response.json({ error: staff.message, staff }, { status: 403 });
 
   // Membership is created on demand by enrollUserInCourse.
   const result = await enrollUserInRoadmap(

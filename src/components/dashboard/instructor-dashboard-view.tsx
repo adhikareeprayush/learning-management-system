@@ -14,6 +14,7 @@ import { StatsCard } from "@/components/dashboard/stats-card";
 import { Button } from "@/components/ui/button";
 import { useLiveData } from "@/hooks/use-live-data";
 import type { getInstructorDashboardData } from "@/lib/dashboard-data";
+import { pluralize } from "@/lib/format";
 import { formatNprFromPaisa } from "@/lib/pricing";
 
 type DashboardData = Awaited<ReturnType<typeof getInstructorDashboardData>>;
@@ -68,7 +69,7 @@ export function InstructorDashboardView({
         ))}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:gap-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:gap-5">
         <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
           <div className="mb-3">
             <h2 className="text-base font-semibold text-brand-navy sm:text-lg">
@@ -157,7 +158,7 @@ export function InstructorDashboardView({
         </section>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,0.85fr)] xl:gap-5">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,0.85fr)] xl:gap-5">
         <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-base font-semibold text-brand-navy sm:text-lg">
@@ -195,7 +196,7 @@ export function InstructorDashboardView({
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="truncate font-semibold text-[#324361]">
+                        <p className="min-w-0 truncate font-semibold text-[#324361]">
                           {course.title}
                         </p>
                         <span
@@ -209,7 +210,8 @@ export function InstructorDashboardView({
                         </span>
                       </div>
                       <p className="mt-0.5 text-xs text-muted">
-                        {course.students} students · {course.lessons} lessons
+                        {pluralize(course.students, "student")} ·{" "}
+                        {pluralize(course.lessons, "lesson")}
                       </p>
                       <div className="mt-2">
                         <ProgressBar value={course.progress} label="Avg learner progress" />
@@ -239,10 +241,12 @@ export function InstructorDashboardView({
                   className="rounded-xl border border-black/5 p-3 transition hover:bg-surface/70"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-[#324361]">{s.name}</p>
-                    <span className="text-[11px] text-muted">{s.enrolled}</span>
+                    <p className="min-w-0 truncate text-sm font-semibold text-[#324361]">
+                      {s.name}
+                    </p>
+                    <span className="shrink-0 text-[11px] text-muted">{s.enrolled}</span>
                   </div>
-                  <p className="mt-0.5 text-xs text-muted">{s.course}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted">{s.course}</p>
                 </li>
               ))}
             </ul>
@@ -271,7 +275,7 @@ export function InstructorDashboardView({
                 <li key={item.id} className="flex gap-3">
                   <span className="mt-1.5 size-2 shrink-0 rounded-full bg-brand-teal" />
                   <div className="min-w-0">
-                    <p className="text-sm text-[#324361]">{item.text}</p>
+                    <p className="break-words text-sm text-[#324361]">{item.text}</p>
                     <p className="mt-0.5 text-xs text-muted">{item.time}</p>
                   </div>
                 </li>

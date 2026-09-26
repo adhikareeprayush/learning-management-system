@@ -3,7 +3,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   ArrowRight,
-  Award,
   CheckCircle2,
   Circle,
   Clock3,
@@ -12,7 +11,10 @@ import {
 import { CourseReviews } from "@/components/course/course-reviews";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { ProgressBar } from "@/components/dashboard/progress-bar";
+import { CertificateProgress } from "@/components/student/certificate-progress";
 import { getServerSession } from "@/lib/auth";
+import { formatLevel, pluralize } from "@/lib/format";
+import { loginRedirectPath } from "@/lib/page-guards";
 import {
   flatLessonsFromCourse,
   getEnrolledStudentCourse,
@@ -22,7 +24,7 @@ type Props = { params: Promise<{ courseId: string }> };
 
 export default async function StudentCoursePage({ params }: Props) {
   const session = await getServerSession();
-  if (!session) redirect("/login");
+  if (!session) redirect(await loginRedirectPath());
 
   const { courseId } = await params;
   const course = await getEnrolledStudentCourse(session.user.id, courseId);
@@ -38,7 +40,7 @@ export default async function StudentCoursePage({ params }: Props) {
         backHref="/student/courses"
         backLabel="My courses"
         title={course.title}
-        subtitle={`${course.category} · ${course.level} · Instructor ${course.instructor}`}
+        subtitle={`${course.category} · ${formatLevel(course.level)} · Instructor ${course.instructor}`}
       />
 
       <div className="flex flex-col gap-4 rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:flex-row sm:items-center sm:p-5">
@@ -53,6 +55,9 @@ export default async function StudentCoursePage({ params }: Props) {
           <ProgressBar value={course.progress} label="Overall progress" />
           <p className="mt-2 text-sm text-muted">
             {course.completedLessons} of {course.totalLessons} lessons complete
+            {course.quizzes.length > 0
+              ? ` · ${course.quizzes.length - course.remainingQuizzes.length} of ${pluralize(course.quizzes.length, "quiz", "quizzes")} passed`
+              : ""}
           </p>
         </div>
         {next ? (
@@ -65,6 +70,19 @@ export default async function StudentCoursePage({ params }: Props) {
           </Link>
         ) : null}
       </div>
+
+      <CertificateProgress
+        variant="course"
+        courseSlug={course.slug}
+        courseTitle={course.title}
+        progress={course.progress}
+        lessonsComplete={
+          course.totalLessons > 0 &&
+          course.completedLessons >= course.totalLessons
+        }
+        hasCertificate={Boolean(course.certificate)}
+        remainingQuizzes={course.remainingQuizzes}
+      />
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
         <section className="space-y-5">
@@ -103,7 +121,7 @@ export default async function StudentCoursePage({ params }: Props) {
               Curriculum
             </h2>
             <p className="mt-0.5 text-sm text-muted">
-              {course.totalLessons} lessons
+              {pluralize(course.totalLessons, "lesson")}
             </p>
           </div>
           <div className="divide-y divide-black/5">
@@ -143,21 +161,6 @@ export default async function StudentCoursePage({ params }: Props) {
           </div>
         </section>
       </div>
-
-      {course.progress >= 100 ? (
-        <div className="flex flex-col gap-3 rounded-2xl border border-brand-teal/20 bg-[#e8faf6] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-          <p className="text-sm font-semibold text-brand-navy">
-            You finished this course — share your experience below.
-          </p>
-          <Link
-            href="/student/certificates"
-            className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-brand-teal px-4 text-sm font-semibold text-white transition hover:brightness-110"
-          >
-            <Award className="size-4" />
-            View certificate
-          </Link>
-        </div>
-      ) : null}
 
       <CourseReviews courseId={course.id} />
     </div>

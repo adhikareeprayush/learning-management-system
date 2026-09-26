@@ -11,6 +11,30 @@ const MIN_PASSWORD_LENGTH = 8;
 const inputClass =
   "h-10 w-full rounded-xl border border-black/8 px-3 text-sm outline-none focus:border-brand-purple/40";
 
+function changePasswordErrorMessage(error: {
+  code?: string;
+  message?: string;
+  status: number;
+}) {
+  switch (error.code) {
+    case "INVALID_PASSWORD":
+      return "Your current password is incorrect.";
+    case "PASSWORD_TOO_SHORT":
+      return `New password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
+    case "PASSWORD_TOO_LONG":
+      return "New password must be at most 128 characters.";
+    case "CREDENTIAL_ACCOUNT_NOT_FOUND":
+      return "Your account doesn't have a password yet. Sign out and use “Forgot password?” on the sign-in page to set one.";
+  }
+  if (error.status === 401) {
+    return "Your session has expired. Sign in again, then change your password.";
+  }
+  if (error.status === 429) {
+    return "Too many attempts. Wait a minute and try again.";
+  }
+  return error.message ?? "Could not change your password.";
+}
+
 export function ChangePasswordForm() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -46,11 +70,7 @@ export function ChangePasswordForm() {
         revokeOtherSessions,
       });
       if (changeError) {
-        setError(
-          changeError.code === "INVALID_PASSWORD"
-            ? "Your current password is incorrect."
-            : (changeError.message ?? "Could not change your password."),
-        );
+        setError(changePasswordErrorMessage(changeError));
         return;
       }
       setCurrentPassword("");

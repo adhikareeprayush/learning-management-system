@@ -19,14 +19,6 @@ export const mainNav: NavItem[] = [
   { label: "Instructors", href: "/instructors" },
 ];
 
-export const categoryIcons: Record<string, string> = {
-  "web-development": "/images/categories/1.png",
-  "graphic-design": "/images/categories/2.png",
-  "digital-marketing": "/images/categories/3.png",
-  business: "/images/categories/4.png",
-  "personal-development": "/images/categories/5.png",
-};
-
 export type DashboardRole = "student" | "instructor" | "admin";
 
 export function isDashboardRole(value: unknown): value is DashboardRole {

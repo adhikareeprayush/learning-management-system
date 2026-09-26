@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+BIN=/app/node_modules/.bin
+
 echo "Waiting for database..."
 node <<'NODE'
 const { setTimeout: sleep } = require("node:timers/promises");
@@ -10,7 +12,7 @@ async function wait() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
   for (let i = 0; i < 60; i++) {
-    const client = new Client({ connectionString: url });
+    const client = new Client({ connectionString: url, connectionTimeoutMillis: 5000 });
     try {
       await client.connect();
       await client.query("select 1");
@@ -32,13 +34,18 @@ wait().catch((err) => {
 NODE
 
 echo "Applying migrations..."
-pnpm exec prisma migrate deploy
+"$BIN/prisma" migrate deploy
 
 if [ "${SEED_DATABASE_ON_START:-false}" = "true" ]; then
-  echo "SEED_DATABASE_ON_START=true; seeding database..."
-  pnpm db:seed
-else
-  echo "Skipping database seed. Set SEED_DATABASE_ON_START=true to seed demo data."
+  # seed.ts refuses under NODE_ENV=production unless SEED_DEMO=true.
+  echo "SEED_DATABASE_ON_START=true; seeding demo data..."
+  "$BIN/tsx" seed.ts
+fi
+
+if [ -n "${ADMIN_EMAIL:-}" ]; then
+  # Idempotent: leaves an existing account untouched.
+  echo "ADMIN_EMAIL is set; ensuring the admin account exists..."
+  "$BIN/tsx" scripts/create-admin.ts
 fi
 
 exec "$@"

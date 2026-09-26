@@ -1,3 +1,4 @@
+import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { jsonError, requireOrgAdminApi } from "@/lib/api";
 import {
@@ -25,7 +26,9 @@ export async function PATCH(request: Request) {
   if (auth instanceof Response) return auth;
 
   const body = await request.json().catch(() => null);
-  if (!body || typeof body !== "object") return jsonError("Invalid JSON body", 400);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return jsonError("Invalid JSON body", 400);
+  }
 
   const parsed = parseOrganizationSettingsInput(body);
   if (!parsed.ok) {
@@ -44,6 +47,8 @@ export async function PATCH(request: Request) {
       where: { id: auth.organizationId },
       data: buildOrganizationUpdate(current, parsed.values),
     });
+    // Name and logo are baked into statically rendered pages, the OG image and the manifest.
+    revalidatePath("/", "layout");
 
     return Response.json({
       organization: {

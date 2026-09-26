@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
-import { cleanString, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
-import { findManagedCourse } from "@/lib/course-access";
+import { isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import { boundedText, findManagedCourse, readJsonObject } from "@/lib/course-access";
 
 type Params = { params: Promise<{ assignmentId: string }> };
 
@@ -30,17 +30,24 @@ export async function PATCH(request: Request, { params }: Params) {
     return jsonError("Assignment not found", 404);
   }
 
-  const body = await request.json();
-  if (body.title !== undefined && !cleanString(body.title, 200)) {
-    return jsonError("title is required", 400);
-  }
-  const dueDate = body.dueDate === null ? null : body.dueDate ? new Date(body.dueDate) : undefined;
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+  const title = boundedText(body.title, "title", 200, { required: body.title !== undefined });
+  if (!title.ok) return jsonError(title.error, 400);
+  const description = boundedText(body.description, "description", 20_000);
+  if (!description.ok) return jsonError(description.error, 400);
+  const dueDate =
+    body.dueDate === null || body.dueDate === ""
+      ? null
+      : typeof body.dueDate === "string"
+        ? new Date(body.dueDate)
+        : undefined;
   if (dueDate && Number.isNaN(dueDate.getTime())) return jsonError("Invalid dueDate", 400);
   const assignment = await prisma.assignment.update({
     where: { id: assignmentId },
     data: {
-      ...(body.title !== undefined ? { title: cleanString(body.title, 200) } : {}),
-      ...(body.description !== undefined ? { description: cleanString(body.description, 20_000) || null } : {}),
+      ...(body.title !== undefined ? { title: title.value } : {}),
+      ...(body.description !== undefined ? { description: description.value || null } : {}),
       ...(dueDate !== undefined ? { dueDate } : {}),
     },
   });

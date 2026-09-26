@@ -1,4 +1,4 @@
-import type { PaymentStatus } from "@prisma/client";
+import type { PaymentMethodType, PaymentStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { getImagekitEndpoint } from "@/lib/imagekit-url";
 import { getPaymentMethodById } from "@/lib/payment-methods";
@@ -88,16 +88,28 @@ export async function submitCoursePayment(input: {
     };
   }
 
-  const existingEnrollment = await prisma.enrollment.findUnique({
-    where: {
-      courseId_studentId: { courseId: course.id, studentId: input.userId },
-    },
-  });
+  const [existingEnrollment, completedPayment] = await Promise.all([
+    prisma.enrollment.findUnique({
+      where: {
+        courseId_studentId: { courseId: course.id, studentId: input.userId },
+      },
+    }),
+    getCompletedPaymentForCourse(input.userId, course.id),
+  ]);
 
   if (existingEnrollment) {
     return {
       ok: false as const,
       error: "You are already enrolled in this course",
+      status: 409,
+    };
+  }
+
+  // An approved payment already grants access; enrolling uses it (no second charge).
+  if (completedPayment) {
+    return {
+      ok: false as const,
+      error: "Your payment for this course is already approved — enroll to open it",
       status: 409,
     };
   }
@@ -160,29 +172,49 @@ export type StudentPaymentSummary = {
   amount: number;
   status: PaymentStatus;
   rejectionReason: string | null;
+  purchaseOrderId: string;
+  methodType: PaymentMethodType | null;
+  methodLabel: string | null;
+  referenceNote: string | null;
   createdAt: string;
   reviewedAt: string | null;
+  completedAt: string | null;
+  refundedAt: string | null;
   course: { id: string; title: string; slug: string };
   enrolled: boolean;
 };
 
-/** Recent course payments for the student dashboard (newest first). */
+/** Refund time recorded by the admin refund action in `metadata.refund.at`. */
+function refundedAt(metadata: Prisma.JsonValue | null) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const refund = metadata.refund;
+  if (!refund || typeof refund !== "object" || Array.isArray(refund)) return null;
+  return typeof refund.at === "string" ? refund.at : null;
+}
+
+/** Course payments for a student, newest first; `take: null` returns the full history. */
 export async function listPaymentsForStudent(
   userId: string,
   organizationId: string,
-  take = 5,
+  take: number | null = 5,
 ): Promise<StudentPaymentSummary[]> {
   const payments = await prisma.payment.findMany({
     where: { userId, course: { organizationId } },
     orderBy: { createdAt: "desc" },
-    take,
+    ...(take === null ? {} : { take }),
     select: {
       id: true,
       amount: true,
       status: true,
       rejectionReason: true,
+      purchaseOrderId: true,
+      methodType: true,
+      referenceNote: true,
       createdAt: true,
       reviewedAt: true,
+      completedAt: true,
+      metadata: true,
+      paymentMethod: { select: { label: true } },
       course: {
         select: {
           id: true,
@@ -199,8 +231,14 @@ export async function listPaymentsForStudent(
     amount: payment.amount,
     status: payment.status,
     rejectionReason: payment.rejectionReason,
+    purchaseOrderId: payment.purchaseOrderId,
+    methodType: payment.methodType,
+    methodLabel: payment.paymentMethod?.label ?? null,
+    referenceNote: payment.referenceNote,
     createdAt: payment.createdAt.toISOString(),
     reviewedAt: payment.reviewedAt?.toISOString() ?? null,
+    completedAt: payment.completedAt?.toISOString() ?? null,
+    refundedAt: payment.status === "REFUNDED" ? refundedAt(payment.metadata) : null,
     course: {
       id: payment.course.id,
       title: payment.course.title,

@@ -1,7 +1,9 @@
 import type { PaymentStatus, Prisma, Role } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { formatDuration } from "@/lib/format";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { formatCoursePrice } from "@/lib/pricing";
+import { currentInstitutionUserWhere } from "@/lib/user-admin";
 
 const MONTH_LABELS = [
   "Jan",
@@ -174,12 +176,15 @@ export async function getStudentDashboardData(
     return done >= total;
   }).length;
 
-  const hoursLearned = completedRows.reduce((sum, row) => {
-    const lesson = enrollments
-      .flatMap((e) => e.course.lessons)
-      .find((l) => l.id === row.lessonId);
-    return sum + (lesson?.duration ?? 0);
-  }, 0) / 60;
+  const lessonDurationById = new Map(
+    enrollments
+      .flatMap((enrollment) => enrollment.course.lessons)
+      .map((lesson) => [lesson.id, lesson.duration] as const),
+  );
+
+  const hoursLearned =
+    completedRows.reduce((sum, row) => sum + (lessonDurationById.get(row.lessonId) ?? 0), 0) /
+    60;
 
   const courseIds = enrollments.map((e) => e.course.id);
   // No `take` here: submitted assignments are filtered out below, so limiting
@@ -283,12 +288,6 @@ export async function getStudentDashboardData(
   const dayBuckets = rollingWeekBuckets();
   const weekStart = dayBuckets[0]!.start;
 
-  const lessonDurationById = new Map(
-    enrollments
-      .flatMap((enrollment) => enrollment.course.lessons)
-      .map((lesson) => [lesson.id, lesson.duration] as const),
-  );
-
   const weeklyEntries = completedRows
     .filter((row) => row.completedAt && row.completedAt >= weekStart)
     .map((row) => ({
@@ -343,10 +342,6 @@ export async function getStudentDashboardData(
     completionByCategory,
     monthlyProgress,
     weeklyLearningHours,
-    skillRadar: {
-      categories: completionByCategory.labels,
-      series: [{ name: "Category progress", data: completionByCategory.series }],
-    },
     streakDays: computeStreakDays(
       completedRows
         .map((row) => row.completedAt)
@@ -363,11 +358,6 @@ export async function getInstructorDashboardData(
     where: { instructorId, organizationId },
     include: {
       _count: { select: { enrollments: true, lessons: true, reviews: true } },
-      enrollments: {
-        select: { progress: true, enrolledAt: true },
-        orderBy: { enrolledAt: "desc" },
-      },
-      reviews: { select: { rating: true } },
     },
     orderBy: { updatedAt: "desc" },
   });
@@ -375,18 +365,38 @@ export async function getInstructorDashboardData(
   const courseIds = courses.map((c) => c.id);
   const totalStudents = courses.reduce((sum, c) => sum + c._count.enrollments, 0);
   const published = courses.filter((c) => c.status === "PUBLISHED").length;
+  const shownCourses = courses.slice(0, 4);
 
-  const allRatings = courses.flatMap((course) => course.reviews.map((r) => r.rating));
+  const [ratingStats, progressRows] = await Promise.all([
+    courseIds.length
+      ? prisma.review.aggregate({
+          where: { courseId: { in: courseIds } },
+          _avg: { rating: true },
+          _count: { _all: true },
+        })
+      : null,
+    shownCourses.length
+      ? prisma.enrollment.groupBy({
+          by: ["courseId"],
+          where: { courseId: { in: shownCourses.map((c) => c.id) } },
+          _avg: { progress: true },
+        })
+      : [],
+  ]);
+  const reviewCount = ratingStats?._count._all ?? 0;
   const avgRating =
-    allRatings.length === 0
+    reviewCount === 0 || ratingStats?._avg.rating == null
       ? null
-      : Math.round(
-          (allRatings.reduce((sum, rating) => sum + rating, 0) / allRatings.length) *
-            10,
-        ) / 10;
+      : Math.round(ratingStats._avg.rating * 10) / 10;
+  const avgProgressByCourse = new Map(
+    progressRows.map((row) => [row.courseId, row._avg.progress ?? 0] as const),
+  );
 
   const recentStudents = await prisma.enrollment.findMany({
-    where: courseIds.length ? { courseId: { in: courseIds } } : { courseId: "none" },
+    where: {
+      ...(courseIds.length ? { courseId: { in: courseIds } } : { courseId: "none" }),
+      student: { deletedAt: null },
+    },
     orderBy: { enrolledAt: "desc" },
     take: 6,
     include: {
@@ -441,14 +451,8 @@ export async function getInstructorDashboardData(
     .slice(4)
     .reduce((sum, row) => sum + row.amountPaisa, 0);
 
-  const instructorCourses = courses.slice(0, 4).map((c) => {
-    const avgProgress =
-      c.enrollments.length === 0
-        ? 0
-        : Math.round(
-            c.enrollments.reduce((sum, enrollment) => sum + enrollment.progress, 0) /
-              c.enrollments.length,
-          );
+  const instructorCourses = shownCourses.map((c) => {
+    const avgProgress = Math.round(avgProgressByCourse.get(c.id) ?? 0);
     return {
       id: c.id,
       slug: c.slug,
@@ -472,9 +476,10 @@ export async function getInstructorDashboardData(
       },
       {
         id: "students",
-        label: "Students",
+        // Counts enrollments, not unique learners (see /instructor/students).
+        label: "Enrollments",
         value: String(totalStudents),
-        delta: "Total enrollments",
+        delta: "All courses, all time",
         tone: "teal" as const,
       },
       {
@@ -489,8 +494,8 @@ export async function getInstructorDashboardData(
         label: "Avg rating",
         value: avgRating !== null ? String(avgRating) : "—",
         delta:
-          allRatings.length > 0
-            ? `${allRatings.length} review${allRatings.length === 1 ? "" : "s"}`
+          reviewCount > 0
+            ? `${reviewCount} review${reviewCount === 1 ? "" : "s"}`
             : "No reviews yet",
         tone: "mint" as const,
       },
@@ -532,13 +537,14 @@ const ROLE_LABELS: Record<RoleKey, string> = {
 };
 
 /**
- * Accounts by User.role — the same field the admin Users page filters on, so
- * dashboard numbers match what the linked lists show.
+ * Institute accounts by User.role — the same scope and field the admin Users
+ * page filters on (deleted accounts excluded), so dashboard numbers match what
+ * the linked lists show.
  */
-async function countUsersByRole(where: Prisma.UserWhereInput = {}) {
+async function countUsersByRole(organizationId: string, where: Prisma.UserWhereInput = {}) {
   const rows = await prisma.user.groupBy({
     by: ["role"],
-    where,
+    where: { AND: [currentInstitutionUserWhere(organizationId), where] },
     _count: { _all: true },
   });
   const counts: Record<RoleKey, number> = { STUDENT: 0, INSTRUCTOR: 0, ADMIN: 0 };
@@ -553,18 +559,28 @@ export async function getAdminDashboardData(organizationId: string) {
   const months = lastMonths(6);
   const windowStart = months[0]!.start;
 
-  const [roleCounts, courseCount, enrollmentCount, inReviewCount, baseline, windowUsers] =
-    await Promise.all([
-      countUsersByRole(),
-      prisma.course.count({ where: orgCourseFilter }),
-      prisma.enrollment.count({ where: orgEnrollmentFilter }),
-      prisma.course.count({ where: { organizationId, status: "IN_REVIEW" } }),
-      countUsersByRole({ createdAt: { lt: windowStart } }),
-      prisma.user.findMany({
-        where: { createdAt: { gte: windowStart } },
-        select: { role: true, createdAt: true },
-      }),
-    ]);
+  const [
+    roleCounts,
+    courseCount,
+    enrollmentCount,
+    inReviewCount,
+    pendingPayments,
+    baseline,
+    windowUsers,
+  ] = await Promise.all([
+    countUsersByRole(organizationId),
+    prisma.course.count({ where: orgCourseFilter }),
+    prisma.enrollment.count({ where: orgEnrollmentFilter }),
+    prisma.course.count({ where: { organizationId, status: "IN_REVIEW" } }),
+    prisma.payment.count({ where: { status: "PENDING", course: { organizationId } } }),
+    countUsersByRole(organizationId, { createdAt: { lt: windowStart } }),
+    prisma.user.findMany({
+      where: {
+        AND: [currentInstitutionUserWhere(organizationId), { createdAt: { gte: windowStart } }],
+      },
+      select: { role: true, createdAt: true },
+    }),
+  ]);
 
   const students = roleCounts.STUDENT;
   const instructors = roleCounts.INSTRUCTOR;
@@ -620,6 +636,7 @@ export async function getAdminDashboardData(organizationId: string) {
   });
 
   const recentUsers = await prisma.user.findMany({
+    where: currentInstitutionUserWhere(organizationId),
     orderBy: { createdAt: "desc" },
     take: 5,
     select: { id: true, name: true, role: true, createdAt: true },
@@ -655,6 +672,14 @@ export async function getAdminDashboardData(organizationId: string) {
         delta: "Instructor accounts",
         tone: "mint" as const,
       },
+      {
+        id: "payments",
+        // Short label: "Pending payments" wraps in the five-card row.
+        label: "Payments",
+        value: String(pendingPayments),
+        delta: pendingPayments > 0 ? "Awaiting review" : "None to review",
+        tone: "purple" as const,
+      },
     ],
     platformGrowth,
     roleDistribution: {
@@ -677,55 +702,74 @@ export async function getAdminDashboardData(organizationId: string) {
   };
 }
 
+const PUBLIC_INSTRUCTOR_ROLES = ["INSTRUCTOR", "ORG_ADMIN"] as const;
+
+function publishedCourseWhere(organizationId: string) {
+  return { organizationId, status: "PUBLISHED" as const };
+}
+
+/** Active instructors with at least one published course; public fields only. */
+function publicInstructorWhere(organizationId: string): Prisma.UserWhereInput {
+  return {
+    disabledAt: null,
+    deletedAt: null,
+    organizationMembers: {
+      some: { organizationId, role: { in: [...PUBLIC_INSTRUCTOR_ROLES] } },
+    },
+    courseTeaching: { some: publishedCourseWhere(organizationId) },
+  };
+}
+
 export async function getInstructorsFromDb(organizationId: string) {
   const members = await prisma.organizationMember.findMany({
     where: {
       organizationId,
-      role: { in: ["INSTRUCTOR", "ORG_ADMIN"] },
+      role: { in: [...PUBLIC_INSTRUCTOR_ROLES] },
+      user: publicInstructorWhere(organizationId),
     },
-    include: {
+    orderBy: { createdAt: "asc" },
+    take: 200,
+    select: {
       user: {
-        include: {
-          courseTeaching: {
-            where: { organizationId, status: "PUBLISHED" },
-            take: 3,
-            select: { id: true, title: true, slug: true, thumbnail: true, category: true },
+        select: {
+          id: true,
+          name: true,
+          image: true,
+          bio: true,
+          _count: {
+            select: { courseTeaching: { where: publishedCourseWhere(organizationId) } },
           },
         },
       },
     },
-    orderBy: { createdAt: "asc" },
   });
 
-  return members.map((m) => ({
-    ...m.user,
-    _count: {
-      courseTeaching: m.user.courseTeaching.length,
-    },
-  }));
+  return members.map((member) => member.user);
 }
 
 export async function getInstructorProfile(instructorId: string, organizationId: string) {
-  const member = await prisma.organizationMember.findFirst({
-    where: {
-      organizationId,
-      userId: instructorId,
-      role: { in: ["INSTRUCTOR", "ORG_ADMIN"] },
-    },
-  });
-  if (!member) return null;
-
   return prisma.user.findFirst({
-    where: { id: instructorId },
-    include: {
+    where: { id: instructorId, ...publicInstructorWhere(organizationId) },
+    select: {
+      id: true,
+      name: true,
+      image: true,
+      bio: true,
       courseTeaching: {
-        where: { organizationId, status: "PUBLISHED" },
-        include: { _count: { select: { enrollments: true, reviews: true } } },
+        where: publishedCourseWhere(organizationId),
+        select: {
+          id: true,
+          slug: true,
+          title: true,
+          thumbnail: true,
+          category: true,
+          price: true,
+          priceNpr: true,
+          _count: { select: { enrollments: true, reviews: true } },
+        },
       },
       _count: {
-        select: {
-          courseTeaching: true,
-        },
+        select: { courseTeaching: { where: publishedCourseWhere(organizationId) } },
       },
     },
   });
@@ -775,21 +819,13 @@ function periodBuckets(key: ReportPeriodKey) {
   return lastMonths(6);
 }
 
-function formatCourseDuration(minutes: number) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h > 0) return `${h.toString().padStart(2, "0")}h ${m.toString().padStart(2, "0")}m`;
-  return `${m}m`;
-}
-
 function formatStudentCount(count: number) {
   return `${count.toLocaleString()} Student${count === 1 ? "" : "s"}`;
 }
 
 export async function getFeaturedCoursesForHome(organizationId: string) {
   const baseInclude = {
-    _count: { select: { enrollments: true } },
-    reviews: { select: { rating: true } },
+    _count: { select: { enrollments: true, reviews: true } },
   } as const;
 
   let courses = await prisma.course.findMany({
@@ -808,22 +844,26 @@ export async function getFeaturedCoursesForHome(organizationId: string) {
     });
   }
 
+  const ratingRows = courses.length
+    ? await prisma.review.groupBy({
+        by: ["courseId"],
+        where: { courseId: { in: courses.map((course) => course.id) } },
+        _avg: { rating: true },
+      })
+    : [];
+  const avgRatingByCourse = new Map(
+    ratingRows.map((row) => [row.courseId, row._avg.rating ?? 0] as const),
+  );
+
   return courses.map((course) => {
     // 0 = no reviews yet; CourseCard hides the stars rather than faking 5.
-    const avgRating =
-      course.reviews.length === 0
-        ? 0
-        : Math.round(
-            (course.reviews.reduce((sum, r) => sum + r.rating, 0) /
-              course.reviews.length) *
-              10,
-          ) / 10;
+    const avgRating = Math.round((avgRatingByCourse.get(course.id) ?? 0) * 10) / 10;
     return {
       id: course.slug,
       title: course.title,
       image: resolveMediaUrl(course.thumbnail),
       students: formatStudentCount(course._count.enrollments),
-      duration: formatCourseDuration(course.duration),
+      duration: formatDuration(course.duration),
       price: formatCoursePrice(course),
       category: course.category ?? undefined,
       date: course.createdAt.toLocaleDateString("en-US", {
@@ -832,7 +872,7 @@ export async function getFeaturedCoursesForHome(organizationId: string) {
         year: "numeric",
       }),
       rating: avgRating,
-      reviewCount: course.reviews.length,
+      reviewCount: course._count.reviews,
     };
   });
 }
@@ -846,17 +886,19 @@ export async function getInstructorAnalyticsData(
     include: {
       _count: { select: { enrollments: true } },
       lessons: { select: { id: true, duration: true } },
-      enrollments: { select: { progress: true } },
     },
   });
 
   const courseIds = courses.map((c) => c.id);
   const lessonIds = courses.flatMap((c) => c.lessons.map((l) => l.id));
+  const lessonDurationById = new Map(
+    courses.flatMap((c) => c.lessons.map((l) => [l.id, l.duration] as const)),
+  );
 
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 
-  const [newEnrollments, completedProgress] = await Promise.all([
+  const [newEnrollments, completedByLesson, progressRows] = await Promise.all([
     courseIds.length
       ? prisma.enrollment.count({
           where: {
@@ -866,35 +908,40 @@ export async function getInstructorAnalyticsData(
         })
       : Promise.resolve(0),
     lessonIds.length
-      ? prisma.lessonProgress.findMany({
+      ? prisma.lessonProgress.groupBy({
+          by: ["lessonId"],
           where: {
             lessonId: { in: lessonIds },
             completed: true,
             completedAt: { not: null },
           },
-          include: { lesson: { select: { duration: true } } },
+          _count: { _all: true },
+        })
+      : Promise.resolve([]),
+    courseIds.length
+      ? prisma.enrollment.groupBy({
+          by: ["courseId"],
+          where: { courseId: { in: courseIds } },
+          _avg: { progress: true },
         })
       : Promise.resolve([]),
   ]);
 
-  const totalWatchMinutes = completedProgress.reduce(
-    (sum, row) => sum + row.lesson.duration,
+  const totalWatchMinutes = completedByLesson.reduce(
+    (sum, row) => sum + row._count._all * (lessonDurationById.get(row.lessonId) ?? 0),
     0,
   );
   const watchHours = Math.round((totalWatchMinutes / 60) * 10) / 10;
 
+  const avgProgressByCourse = new Map(
+    progressRows.map((row) => [row.courseId, row._avg.progress ?? 0] as const),
+  );
   const avgCompletion =
     courses.length === 0
       ? 0
       : Math.round(
-          courses.reduce((sum, course) => {
-            const courseAvg =
-              course.enrollments.length === 0
-                ? 0
-                : course.enrollments.reduce((s, e) => s + e.progress, 0) /
-                  course.enrollments.length;
-            return sum + courseAvg;
-          }, 0) / courses.length,
+          courses.reduce((sum, course) => sum + (avgProgressByCourse.get(course.id) ?? 0), 0) /
+            courses.length,
         );
 
   const weekBuckets = rollingWeekBuckets(now);
@@ -907,7 +954,7 @@ export async function getInstructorAnalyticsData(
           completed: true,
           completedAt: { gte: weekStart },
         },
-        include: { lesson: { select: { duration: true } } },
+        select: { lessonId: true, completedAt: true },
       })
     : [];
 
@@ -915,7 +962,7 @@ export async function getInstructorAnalyticsData(
     .filter((row) => row.completedAt)
     .map((row) => ({
       at: row.completedAt!,
-      minutes: row.lesson.duration,
+      minutes: lessonDurationById.get(row.lessonId) ?? 0,
     }));
 
   const watchTimeWeekly = {
@@ -932,13 +979,9 @@ export async function getInstructorAnalyticsData(
     labels: courses.slice(0, 4).map((c) =>
       c.title.length > 22 ? `${c.title.slice(0, 22)}…` : c.title,
     ),
-    series: courses.slice(0, 4).map((course) => {
-      if (course.enrollments.length === 0) return 0;
-      return Math.round(
-        course.enrollments.reduce((s, e) => s + e.progress, 0) /
-          course.enrollments.length,
-      );
-    }),
+    series: courses
+      .slice(0, 4)
+      .map((course) => Math.round(avgProgressByCourse.get(course.id) ?? 0)),
   };
 
   const months = lastMonths(6);
@@ -1085,7 +1128,8 @@ export async function getAdminReportsData(
   const [
     enrollmentsInPeriod,
     progressInPeriod,
-    allEnrollments,
+    progressAverage,
+    enrollmentsByCourse,
     newUsers,
     roleCounts,
     totalCourses,
@@ -1107,15 +1151,22 @@ export async function getAdminReportsData(
         lesson: { select: { duration: true } },
       },
     }),
-    prisma.enrollment.findMany({
+    prisma.enrollment.aggregate({
       where: orgEnrollmentFilter,
-      select: { progress: true, course: { select: { category: true } } },
+      _avg: { progress: true },
+    }),
+    prisma.enrollment.groupBy({
+      by: ["courseId"],
+      where: orgEnrollmentFilter,
+      _count: { _all: true },
     }),
     prisma.user.findMany({
-      where: { createdAt: { gte: start, lte: end } },
+      where: {
+        AND: [currentInstitutionUserWhere(organizationId), { createdAt: { gte: start, lte: end } }],
+      },
       select: { role: true, createdAt: true },
     }),
-    countUsersByRole(),
+    countUsersByRole(organizationId),
     prisma.course.count({ where: { organizationId } }),
     prisma.enrollment.count({ where: orgEnrollmentFilter }),
     getRevenueReport(organizationId, start, end),
@@ -1128,23 +1179,27 @@ export async function getAdminReportsData(
         10,
     ) / 10;
 
-  const completionRate =
-    allEnrollments.length === 0
-      ? 0
-      : Math.round(
-          allEnrollments.reduce((sum, e) => sum + e.progress, 0) /
-            allEnrollments.length,
-        );
+  const completionRate = Math.round(progressAverage._avg.progress ?? 0);
 
+  const enrolledCourses = enrollmentsByCourse.length
+    ? await prisma.course.findMany({
+        where: { id: { in: enrollmentsByCourse.map((row) => row.courseId) } },
+        select: { id: true, category: true },
+      })
+    : [];
+  const categoryByCourse = new Map(
+    enrolledCourses.map((course) => [course.id, course.category ?? "Other"] as const),
+  );
   const categoryMap = new Map<string, number>();
-  for (const enrollment of allEnrollments) {
-    const cat = enrollment.course.category ?? "Other";
-    categoryMap.set(cat, (categoryMap.get(cat) ?? 0) + 1);
+  for (const row of enrollmentsByCourse) {
+    const cat = categoryByCourse.get(row.courseId) ?? "Other";
+    categoryMap.set(cat, (categoryMap.get(cat) ?? 0) + row._count._all);
   }
+  const topCategories = [...categoryMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
 
   const categoryShare = {
-    labels: [...categoryMap.keys()].slice(0, 5),
-    series: [...categoryMap.values()].slice(0, 5),
+    labels: topCategories.map(([label]) => label),
+    series: topCategories.map(([, count]) => count),
   };
 
   const newStudents = newUsers.filter((user) => user.role === "STUDENT");
@@ -1214,13 +1269,23 @@ export async function getAdminReportsData(
 export const ADMIN_PAYMENTS_PAGE_SIZE = 25;
 
 const adminPaymentInclude = {
-  user: { select: { id: true, name: true, email: true } },
+  user: { select: { id: true, name: true, email: true, deletedAt: true } },
   course: { select: { id: true, title: true, slug: true } },
   paymentMethod: { select: { id: true, label: true, type: true } },
   reviewedBy: { select: { id: true, name: true } },
 } satisfies Prisma.PaymentInclude;
 
 type AdminPaymentRecord = Prisma.PaymentGetPayload<{ include: typeof adminPaymentInclude }>;
+
+function refundInfo(metadata: Prisma.JsonValue | null) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const refund = metadata.refund;
+  if (!refund || typeof refund !== "object" || Array.isArray(refund)) return null;
+  return {
+    at: typeof refund.at === "string" ? refund.at : null,
+    byName: typeof refund.byName === "string" ? refund.byName : null,
+  };
+}
 
 export function serializeAdminPayment(payment: AdminPaymentRecord) {
   return {
@@ -1229,10 +1294,17 @@ export function serializeAdminPayment(payment: AdminPaymentRecord) {
     status: payment.status,
     screenshotUrl: payment.screenshotUrl,
     referenceNote: payment.referenceNote,
+    transactionId: payment.transactionId,
     rejectionReason: payment.rejectionReason,
+    refund: payment.status === "REFUNDED" ? refundInfo(payment.metadata) : null,
     createdAt: payment.createdAt.toISOString(),
     reviewedAt: payment.reviewedAt?.toISOString() ?? null,
-    user: payment.user,
+    user: {
+      id: payment.user.id,
+      name: payment.user.name,
+      // Deleted accounts keep a placeholder address; it means nothing to admins.
+      email: payment.user.deletedAt ? null : payment.user.email,
+    },
     course: payment.course,
     paymentMethod: payment.paymentMethod,
     reviewedBy: payment.reviewedBy,

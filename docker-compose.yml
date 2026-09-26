@@ -17,36 +17,56 @@ services:
       timeout: 5s
       retries: 20
 
-  web:
-    image: lms-node:22
-    container_name: lms-web
+  # Local inbox for testing emails: SMTP on :1025, web UI on http://localhost:8025
+  mail:
+    image: axllent/mailpit:latest
+    container_name: lms-mail
     restart: unless-stopped
-    working_dir: /app
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # The production image (Dockerfile) wired to the db and mail services above:
+  # `pnpm docker:web`, then http://localhost:3005 (stop `pnpm dev` first, both
+  # use port 3005). Reads the rest of its config (BETTER_AUTH_SECRET, IMAGEKIT_*,
+  # ADMIN_*) from .env; emails go to Mailpit at http://localhost:8025.
+  web:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_APP_URL: http://localhost:3005
+        NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT: ${NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT:-}
+        IMAGEKIT_URL_ENDPOINT: ${IMAGEKIT_URL_ENDPOINT:-}
+        NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-false}
+    image: lms-web:local
+    container_name: lms-web
+    init: true
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
+      mail:
+        condition: service_started
     ports:
-      - "3005:3005"
+      - "127.0.0.1:3005:3005"
+    env_file:
+      - path: .env
+        required: false
     environment:
-      CI: "true"
       DATABASE_URL: postgresql://postgres:postgres@db:5432/lms
-      BETTER_AUTH_SECRET: docker-dev-secret-change-me-32chars
+      # Blank so migrations can't follow a DIRECT_URL in .env to a remote database.
+      DIRECT_URL: ""
       BETTER_AUTH_URL: http://localhost:3005
       NEXT_PUBLIC_APP_URL: http://localhost:3005
-      # Production-safe default; local demo scripts run pnpm db:seed explicitly.
-      SEED_DATABASE_ON_START: "${SEED_DATABASE_ON_START:-false}"
-      WATCHPACK_POLLING: "true"
-      HOSTNAME: 0.0.0.0
-      PORT: "3005"
-    volumes:
-      - .:/app
-    command:
-      - bash
-      - -lc
-      - |
-        set -e
-        ./node_modules/.bin/prisma generate
-        ./node_modules/.bin/next dev --hostname 0.0.0.0 --port 3005
+      SMTP_HOST: mail
+      SMTP_PORT: "1025"
+      SMTP_SECURE: "false"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      EMAIL_FROM: "Convolution LMS <no-reply@localhost>"
+      # Demo data needs both: SEED_DATABASE_ON_START=true SEED_DEMO=true pnpm docker:web
+      SEED_DATABASE_ON_START: ${SEED_DATABASE_ON_START:-false}
+      SEED_DEMO: ${SEED_DEMO:-false}
 
 volumes:
   lms_pgdata:

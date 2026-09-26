@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -10,9 +11,16 @@ import {
   Users,
 } from "lucide-react";
 import { getServerSession } from "@/lib/auth";
-import { formatLevel, listPublishedRoadmaps } from "@/lib/roadmaps";
+import { formatLevel, pluralize } from "@/lib/format";
+import { listPublishedRoadmaps } from "@/lib/roadmaps";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
-import { notFound } from "next/navigation";
+
+export const metadata: Metadata = {
+  title: "Learning roadmaps",
+  description:
+    "Curated learning paths that take you through several courses in a recommended order, with a roadmap certificate when you finish.",
+  alternates: { canonical: "/roadmaps" },
+};
 
 const NUMBER_WORDS = [
   "Zero",
@@ -37,14 +45,13 @@ function pathCountHeadline(count: number) {
 }
 
 export default async function RoadmapsPage() {
-  const tenant = await resolveTenantFromHeaders();
-  if (!tenant) notFound();
-
-  const session = await getServerSession();
-  const roadmaps = await listPublishedRoadmaps(
-    tenant.organizationId,
-    session?.user.id ?? null,
-  );
+  const [tenant, session] = await Promise.all([
+    resolveTenantFromHeaders(),
+    getServerSession(),
+  ]);
+  const roadmaps = tenant
+    ? await listPublishedRoadmaps(tenant.organizationId, session?.user.id ?? null)
+    : [];
 
   return (
     <div className="bg-[#f7f8fc] pb-16 sm:pb-20">
@@ -59,12 +66,12 @@ export default async function RoadmapsPage() {
           </p>
           <h1 className="mt-3 max-w-3xl font-display text-[1.85rem] leading-[1.15] sm:mt-4 sm:text-4xl md:text-5xl lg:text-[56px] lg:leading-tight">
             {pathCountHeadline(roadmaps.length)}{" "}
-            <span className="text-brand-mint">Real course order.</span>
+            <span className="text-brand-mint">One clear order.</span>
           </h1>
           <p className="mt-3 max-w-xl text-base leading-relaxed text-white/80 sm:mt-4 sm:text-lg">
-            Each roadmap chains published courses with modules and lessons already
-            in the catalog. Finish the path, earn a credential separate from
-            individual course certificates.
+            Each roadmap strings courses together in a recommended order.
+            Finish every course in the path to earn a roadmap certificate on
+            top of your course certificates.
           </p>
           <div className="mt-6 flex flex-wrap gap-5 text-sm text-white/90">
             <span className="inline-flex items-center gap-2">
@@ -136,7 +143,7 @@ export default async function RoadmapsPage() {
                   <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
                     <span className="inline-flex items-center gap-1">
                       <BookOpen className="size-3.5 text-brand-purple" />
-                      {roadmap.courseCount} courses
+                      {pluralize(roadmap.courseCount, "course")}
                     </span>
                     <span className="inline-flex items-center gap-1">
                       <Clock className="size-3.5 text-brand-teal" />

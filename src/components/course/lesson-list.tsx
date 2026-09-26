@@ -109,17 +109,23 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
   async function removeModule(courseModule: AuthoringModule) {
     const lessonCount = lessons.filter((lesson) => lesson.moduleId === courseModule.id).length;
     const warning = lessonCount
-      ? `Delete “${courseModule.title}” and its ${lessonCount} lesson${lessonCount === 1 ? "" : "s"}?`
-      : `Delete “${courseModule.title}”?`;
+      ? `Delete the module “${courseModule.title}”? Its ${lessonCount} lesson${lessonCount === 1 ? "" : "s"} will move to “Other lessons” — no lessons or student progress are lost.`
+      : `Delete the module “${courseModule.title}”?`;
     if (!window.confirm(warning)) return;
     setBusy(`module-${courseModule.id}`);
     setError(null);
     try {
       await api(`/api/modules/${courseModule.id}`, { method: "DELETE" });
       setModules((current) => current.filter((item) => item.id !== courseModule.id));
-      setLessons((current) => current.filter((lesson) => lesson.moduleId !== courseModule.id));
+      setLessons((current) =>
+        current.map((lesson) => (lesson.moduleId === courseModule.id ? { ...lesson, moduleId: null } : lesson)),
+      );
       setNewLessonModuleId((current) => (current === courseModule.id ? "" : current));
-      setFlash(`Module “${courseModule.title}” deleted.`);
+      setFlash(
+        lessonCount
+          ? `Module “${courseModule.title}” deleted. Its lessons are now under “Other lessons”.`
+          : `Module “${courseModule.title}” deleted.`,
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not delete module");
     } finally {
@@ -187,7 +193,7 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
       }>("/api/upload");
       if (!providers.providers.youtube) {
         throw new Error(
-          "YouTube is not configured on the server. Add YOUTUBE_* env vars and run pnpm youtube:setup (Production OAuth consent).",
+          "Video uploads aren't set up yet. Paste an existing YouTube URL instead, or ask an administrator to connect YouTube.",
         );
       }
 
@@ -345,7 +351,7 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
     })),
     {
       id: "unassigned",
-      title: "Unassigned lessons",
+      title: "Other lessons",
       lessons: lessons.filter((lesson) => !lesson.moduleId || !moduleIds.has(lesson.moduleId)).sort(byOrder),
     },
   ].filter((group) => group.id !== "unassigned" || group.lessons.length > 0);
@@ -374,8 +380,8 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
                     <button type="button" onClick={() => moveModule(moduleIndex, 1)} disabled={busy !== null || moduleIndex === modules.length - 1} aria-label={`Move ${courseModule.title} down`} className="grid size-7 place-items-center rounded-lg text-brand-navy hover:bg-surface disabled:opacity-40"><ArrowDown className="size-3.5" /></button>
                   </span>
                 </div>
-                <input value={courseModule.title} onChange={(event) => setModules((current) => current.map((item) => item.id === courseModule.id ? { ...item, title: event.target.value } : item))} className="w-full rounded-lg border border-black/8 px-3 py-2 font-medium outline-none focus:ring-2 focus:ring-brand-purple/20" />
-                <textarea value={courseModule.description} onChange={(event) => setModules((current) => current.map((item) => item.id === courseModule.id ? { ...item, description: event.target.value } : item))} placeholder="Optional module description" className="mt-2 min-h-16 w-full rounded-lg border border-black/8 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-purple/20" />
+                <input maxLength={160} value={courseModule.title} onChange={(event) => setModules((current) => current.map((item) => item.id === courseModule.id ? { ...item, title: event.target.value } : item))} className="w-full rounded-lg border border-black/8 px-3 py-2 font-medium outline-none focus:ring-2 focus:ring-brand-purple/20" />
+                <textarea maxLength={2000} value={courseModule.description} onChange={(event) => setModules((current) => current.map((item) => item.id === courseModule.id ? { ...item, description: event.target.value } : item))} placeholder="Optional module description" className="mt-2 min-h-16 w-full rounded-lg border border-black/8 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-purple/20" />
                 <div className="mt-2 flex justify-end gap-2">
                   <button type="button" onClick={() => removeModule(courseModule)} disabled={busy !== null} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 className="size-3.5" /> Delete</button>
                   <button type="button" onClick={() => saveModule(courseModule)} disabled={busy !== null || !courseModule.title.trim()} className="inline-flex items-center gap-1 rounded-lg border border-black/10 px-2.5 py-1.5 text-xs font-semibold text-brand-navy hover:bg-surface disabled:opacity-50"><Save className="size-3.5" /> Save</button>
@@ -415,13 +421,13 @@ export function LessonList({ course, initialModules, initialLessons }: LessonLis
                       <button type="button" onClick={() => moveLesson(lesson, 1)} disabled={busy !== null || lessonIndex === group.lessons.length - 1} aria-label={`Move ${lesson.title} down`} className="grid size-8 shrink-0 place-items-center rounded-lg text-brand-navy hover:bg-surface disabled:opacity-40"><ArrowDown className="size-4" /></button>
                     </div>
                     {isOpen ? (
-                      <div className="grid gap-4 border-t border-black/5 p-4 sm:p-5 lg:grid-cols-2">
-                        <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Title</span><input value={lesson.title} onChange={(event) => updateLesson(lesson.id, { title: event.target.value })} className="w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
+                      <div className="grid grid-cols-1 gap-4 border-t border-black/5 p-4 sm:p-5 lg:grid-cols-2">
+                        <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Title</span><input maxLength={200} value={lesson.title} onChange={(event) => updateLesson(lesson.id, { title: event.target.value })} className="w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
                         <label className="block"><span className="mb-1 block text-xs font-semibold text-muted">Module</span><select value={lesson.moduleId ?? ""} onChange={(event) => updateLesson(lesson.id, { moduleId: event.target.value || null })} className="w-full rounded-xl border border-black/10 bg-white px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20"><option value="">No module</option>{modules.map((courseModule) => <option key={courseModule.id} value={courseModule.id}>{courseModule.title}</option>)}</select></label>
                         <label className="block"><span className="mb-1 block text-xs font-semibold text-muted">Duration (minutes)</span><input type="number" min="0" value={lesson.duration} onChange={(event) => updateLesson(lesson.id, { duration: Number(event.target.value) })} className="w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
-                        <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Summary</span><textarea value={lesson.summary ?? ""} onChange={(event) => updateLesson(lesson.id, { summary: event.target.value })} className="min-h-20 w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
+                        <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Summary</span><textarea maxLength={2000} value={lesson.summary ?? ""} onChange={(event) => updateLesson(lesson.id, { summary: event.target.value })} className="min-h-20 w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
                         <label className="block lg:col-span-2"><span className="mb-1 block text-xs font-semibold text-muted">Written lesson content</span><textarea value={lesson.content ?? ""} onChange={(event) => updateLesson(lesson.id, { content: event.target.value })} className="min-h-40 w-full rounded-xl border border-black/10 px-3 py-2.5 outline-none focus:ring-2 focus:ring-brand-purple/20" /></label>
-                        <div className="rounded-xl border border-black/8 p-3 lg:col-span-2">
+                        <div className="min-w-0 rounded-xl border border-black/8 p-3 lg:col-span-2">
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><p className="flex items-center gap-2 text-sm font-semibold text-brand-navy"><Film className="size-4" /> Lesson video</p><p className="mt-1 truncate text-xs text-muted">{lesson.videoUrl || "Upload a video to the configured YouTube channel as unlisted."}</p></div><label className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-black/10 px-3 py-2 text-xs font-semibold text-brand-navy hover:bg-surface ${busy !== null ? "pointer-events-none opacity-50" : ""}`}><Upload className="size-3.5" /> {videoUpload?.lessonId === lesson.id ? `Uploading ${videoUpload.percent}%` : busy === `video-${lesson.id}` ? "Finishing…" : "Upload video"}<input type="file" accept="video/*" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadVideo(lesson, file); event.currentTarget.value = ""; }} /></label></div>
                           {videoUpload?.lessonId === lesson.id ? (
                             <div className="mt-3 space-y-1">

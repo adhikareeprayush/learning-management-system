@@ -1,10 +1,13 @@
 import type { Organization, Prisma } from "@prisma/client";
+import { parseMediaUrl } from "@/lib/media-url";
 
 /** Editable institute profile. Contact fields live in Organization.settings, visual ones in Organization.branding. */
 export type OrganizationSettingsValues = {
   name: string;
   supportEmail: string;
   contactPhone: string;
+  /** Postal/office address shown on the contact page. */
+  address: string;
   primaryColor: string;
   logoUrl: string;
 };
@@ -35,19 +38,10 @@ export function readOrganizationSettings(
     name: org.name,
     supportEmail: stringField(settings, "supportEmail"),
     contactPhone: stringField(settings, "contactPhone"),
+    address: stringField(settings, "address"),
     primaryColor: stringField(branding, "primaryColor"),
     logoUrl: stringField(branding, "logoUrl"),
   };
-}
-
-function isAllowedLogoUrl(value: string) {
-  if (value.startsWith("/") && !value.startsWith("//")) return true;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:";
-  } catch {
-    return false;
-  }
 }
 
 const validators: Record<OrganizationSettingsField, (value: string) => string | null> = {
@@ -59,12 +53,16 @@ const validators: Record<OrganizationSettingsField, (value: string) => string | 
     value && (!PHONE_RE.test(value) || value.replace(/\D/g, "").length < 6)
       ? "Enter a valid phone number (digits, spaces, +, -, parentheses)."
       : null,
+  address: (value) =>
+    value.length > 300 ? "Keep the address under 300 characters." : null,
   primaryColor: (value) =>
     value && !HEX_COLOR_RE.test(value) ? "Use a 6-digit hex colour like #04016c." : null,
-  logoUrl: (value) =>
-    value && (value.length > 2048 || !isAllowedLogoUrl(value))
-      ? "Use an http(s) URL or a site path starting with /."
-      : null,
+  // Only uploaded or bundled images: the CSP and image optimizer block other hosts.
+  logoUrl: (value) => {
+    if (!value) return null;
+    const parsed = parseMediaUrl(value, "image");
+    return parsed.ok ? null : "Upload the logo here (or use a /images/… path) instead of linking another site.";
+  },
 };
 
 export type ParsedOrganizationSettings =
@@ -110,6 +108,7 @@ export function buildOrganizationUpdate(
 
   assign(settings, "supportEmail", values.supportEmail);
   assign(settings, "contactPhone", values.contactPhone);
+  assign(settings, "address", values.address);
   assign(branding, "primaryColor", values.primaryColor);
   assign(branding, "logoUrl", values.logoUrl);
 

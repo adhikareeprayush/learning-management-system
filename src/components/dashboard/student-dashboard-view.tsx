@@ -17,56 +17,42 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { LiveIndicator } from "@/components/dashboard/live-indicator";
 import { ProgressBar } from "@/components/dashboard/progress-bar";
 import { StatsCard } from "@/components/dashboard/stats-card";
+import {
+  PaymentStatusBadge,
+  resubmittablePaymentIds,
+} from "@/components/student/payment-status-badge";
 import { useLiveData } from "@/hooks/use-live-data";
 import type { getStudentDashboardData } from "@/lib/dashboard-data";
 import { coursePurchasePath } from "@/lib/enroll-client";
+import { formatDate } from "@/lib/format";
 import type { StudentPaymentSummary } from "@/lib/payments";
 import { formatNprFromPaisa } from "@/lib/pricing";
 
 type DashboardData = Awaited<ReturnType<typeof getStudentDashboardData>>;
 
-const paymentStatusMeta: Record<
-  StudentPaymentSummary["status"],
-  { label: string; className: string }
-> = {
-  PENDING: { label: "Under review", className: "bg-amber-50 text-amber-800" },
-  COMPLETED: { label: "Approved", className: "bg-emerald-50 text-emerald-700" },
-  FAILED: { label: "Rejected", className: "bg-red-50 text-red-700" },
-  CANCELED: { label: "Canceled", className: "bg-surface text-muted" },
-  EXPIRED: { label: "Expired", className: "bg-surface text-muted" },
-};
-
-const paymentDateFormatter = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
 function PaymentsCard({ payments }: { payments: StudentPaymentSummary[] }) {
-  const seenCourses = new Set<string>();
-  const rows = payments.map((payment) => {
-    // Only the newest payment per course can be resubmitted.
-    const isLatestForCourse = !seenCourses.has(payment.course.id);
-    seenCourses.add(payment.course.id);
-    return {
-      payment,
-      canResubmit:
-        isLatestForCourse && payment.status === "FAILED" && !payment.enrolled,
-    };
-  });
+  const resubmittable = resubmittablePaymentIds(payments);
 
   return (
     <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
-      <div className="mb-3 flex items-center gap-2">
-        <Receipt className="size-4 text-brand-purple" />
-        <h2 className="text-base font-semibold text-brand-navy sm:text-lg">
-          Payments
-        </h2>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Receipt className="size-4 text-brand-purple" />
+          <h2 className="text-base font-semibold text-brand-navy sm:text-lg">
+            Payments
+          </h2>
+        </div>
+        <Link
+          href="/student/payments"
+          className="inline-flex items-center gap-1 text-sm font-semibold text-brand-purple transition hover:text-brand-teal"
+        >
+          View all
+          <ArrowRight className="size-4" />
+        </Link>
       </div>
       <ul className="divide-y divide-black/5">
-        {rows.map(({ payment, canResubmit }) => {
-          const meta = paymentStatusMeta[payment.status];
+        {payments.map((payment) => {
+          const canResubmit = resubmittable.has(payment.id);
           return (
             <li
               key={payment.id}
@@ -85,7 +71,7 @@ function PaymentsCard({ payments }: { payments: StudentPaymentSummary[] }) {
                 </Link>
                 <p className="mt-0.5 text-xs text-muted">
                   {formatNprFromPaisa(payment.amount)} · Submitted{" "}
-                  {paymentDateFormatter.format(new Date(payment.createdAt))}
+                  {formatDate(payment.createdAt)}
                 </p>
                 {payment.status === "FAILED" ? (
                   <p className="mt-1 text-xs text-red-700">
@@ -96,11 +82,7 @@ function PaymentsCard({ payments }: { payments: StudentPaymentSummary[] }) {
                 ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <span
-                  className={`rounded-md px-2 py-0.5 text-xs font-semibold ${meta.className}`}
-                >
-                  {meta.label}
-                </span>
+                <PaymentStatusBadge status={payment.status} />
                 {canResubmit ? (
                   <Link
                     href={coursePurchasePath(payment.course.slug)}
@@ -150,7 +132,6 @@ export function StudentDashboardView({
     completionByCategory,
     monthlyProgress,
     weeklyLearningHours,
-    skillRadar,
     streakDays,
   } = data;
   const categoryAverage = averageProgress(completionByCategory.series);
@@ -180,7 +161,7 @@ export function StudentDashboardView({
 
       {payments.length > 0 ? <PaymentsCard payments={payments} /> : null}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:gap-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:gap-5">
         <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
@@ -299,7 +280,7 @@ export function StudentDashboardView({
         </section>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:gap-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] lg:gap-5">
         <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
           <div className="mb-3">
             <h2 className="text-base font-semibold text-brand-navy sm:text-lg">
@@ -335,42 +316,31 @@ export function StudentDashboardView({
         </section>
 
         <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
-          <div className="mb-3">
+          <div className="mb-4 flex items-center gap-2">
+            <CheckCircle2 className="size-4 text-brand-teal" />
             <h2 className="text-base font-semibold text-brand-navy sm:text-lg">
-              Category progress
+              Recent activity
             </h2>
-            <p className="text-sm text-muted">Completion rate by enrolled topic</p>
           </div>
-          {skillRadar.categories.length > 0 ? (
-            <ApexChart
-              type="radar"
-              height={300}
-              series={skillRadar.series}
-              options={{
-                colors: [chartColors.purple],
-                fill: { opacity: 0.2 },
-                markers: { size: 3 },
-                xaxis: {
-                  categories: skillRadar.categories,
-                  labels: {
-                    style: {
-                      colors: skillRadar.categories.map(() => chartColors.muted),
-                      fontSize: "11px",
-                    },
-                  },
-                },
-                yaxis: { show: false, max: 100 },
-              }}
-            />
+          {activityFeed.length === 0 ? (
+            <p className="text-sm text-muted">Complete a lesson to see activity.</p>
           ) : (
-            <p className="py-12 text-center text-sm text-muted">
-              Enroll in courses to see category progress.
-            </p>
+            <ul className="space-y-4">
+              {activityFeed.map((item) => (
+                <li key={item.id} className="flex gap-3">
+                  <span className="mt-1.5 size-2 shrink-0 rounded-full bg-brand-teal" />
+                  <div className="min-w-0">
+                    <p className="text-sm text-[#324361]">{item.text}</p>
+                    <p className="mt-0.5 text-xs text-muted">{item.time}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </section>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,0.85fr)_minmax(0,0.85fr)] xl:gap-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-start lg:gap-5">
         <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-base font-semibold text-brand-navy sm:text-lg">
@@ -469,29 +439,6 @@ export function StudentDashboardView({
           </Link>
         </section>
 
-        <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
-          <div className="mb-4 flex items-center gap-2">
-            <CheckCircle2 className="size-4 text-brand-teal" />
-            <h2 className="text-base font-semibold text-brand-navy sm:text-lg">
-              Recent activity
-            </h2>
-          </div>
-          {activityFeed.length === 0 ? (
-            <p className="text-sm text-muted">Complete a lesson to see activity.</p>
-          ) : (
-            <ul className="space-y-4">
-              {activityFeed.map((item) => (
-                <li key={item.id} className="flex gap-3">
-                  <span className="mt-1.5 size-2 shrink-0 rounded-full bg-brand-teal" />
-                  <div className="min-w-0">
-                    <p className="text-sm text-[#324361]">{item.text}</p>
-                    <p className="mt-0.5 text-xs text-muted">{item.time}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
       </div>
     </div>
   );

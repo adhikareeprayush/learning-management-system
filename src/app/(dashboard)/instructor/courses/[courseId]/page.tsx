@@ -31,10 +31,11 @@ export default async function InstructorCoursePage({ params }: Props) {
         description: course.description ?? "",
         category: course.category ?? "",
         level: course.level,
-        priceCents: course.price,
         priceNpr: course.priceNpr,
         outcomes: course.outcomes,
         duration: course.duration,
+        reviewNote: course.reviewNote?.trim() || null,
+        reviewedAt: course.reviewedAt?.toISOString() ?? null,
       }}
     />
   );

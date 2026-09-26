@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
-import { cleanString, finiteNumber, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
-import { findManagedCourse } from "@/lib/course-access";
+import { finiteNumber, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import { boundedText, findManagedCourse, readJsonObject } from "@/lib/course-access";
+import { notifySubmissionGraded } from "@/lib/email-notifications";
 
 type Params = { params: Promise<{ submissionId: string }> };
 
@@ -37,12 +38,16 @@ export async function PATCH(request: Request, { params }: Params) {
     return jsonError("Submission not found", 404);
   }
 
-  const body = await request.json();
-  const grade = finiteNumber(body.grade, Number.NaN);
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+  const grade = body.grade === null || body.grade === "" ? Number.NaN : finiteNumber(body.grade, Number.NaN);
   if (!Number.isFinite(grade) || grade < 0 || grade > 100) return jsonError("grade must be between 0 and 100", 400);
+  const feedback = boundedText(body.feedback, "feedback", 10_000);
+  if (!feedback.ok) return jsonError(feedback.error, 400);
   const submission = await prisma.submission.update({
     where: { id: submissionId },
-    data: { grade, feedback: cleanString(body.feedback, 10_000) || null, status: "GRADED", gradedAt: new Date() },
+    data: { grade, feedback: feedback.value || null, status: "GRADED", gradedAt: new Date() },
   });
+  notifySubmissionGraded(submission.id);
   return Response.json({ submission });
 }

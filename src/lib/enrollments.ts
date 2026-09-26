@@ -84,3 +84,48 @@ export async function enrollUserInCourse(
     enrollmentId: result.enrollmentId,
   };
 }
+
+export type StaffEnrollBlock = {
+  role: "ADMIN" | "INSTRUCTOR";
+  /** Where staff can look at the course or roadmap instead. */
+  previewHref: string;
+  message: string;
+};
+
+/**
+ * The /student area only admits STUDENT accounts, so enrolling staff would
+ * send them to a page that bounces them away. Returns null for students.
+ */
+export async function staffEnrollBlock(
+  user: { id: string; role?: string | null },
+  target: { kind: "course" | "roadmap"; id: string },
+  organizationId: string,
+): Promise<StaffEnrollBlock | null> {
+  if (user.role !== "ADMIN" && user.role !== "INSTRUCTOR") return null;
+  const role = user.role;
+  const noun = target.kind === "course" ? "courses" : "roadmaps";
+  const message = `${role === "ADMIN" ? "Admin" : "Instructor"} accounts can't enroll in ${noun}. Use a student account to learn, or open the preview.`;
+
+  if (role === "ADMIN") {
+    return {
+      role,
+      previewHref: `/admin/${noun}/${encodeURIComponent(target.id)}`,
+      message,
+    };
+  }
+
+  if (target.kind === "course") {
+    const own = await prisma.course.findFirst({
+      where: { id: target.id, organizationId, instructorId: user.id },
+      select: { id: true },
+    });
+    if (own) {
+      return {
+        role,
+        previewHref: `/instructor/courses/${encodeURIComponent(own.id)}`,
+        message,
+      };
+    }
+  }
+  return { role, previewHref: "/instructor", message };
+}

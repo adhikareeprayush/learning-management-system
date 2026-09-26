@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { safeFileName } from "@/lib/api";
+import { storedFileName, type DetectedFileType } from "@/lib/upload-client";
 
 type UploadResult = {
   provider: "local";
@@ -10,17 +11,24 @@ type UploadResult = {
 };
 
 /** Dev-only disk storage when ImageKit keys are not configured. */
-export async function uploadToLocalDisk(file: File, folder: string): Promise<UploadResult> {
-  const sanitizedFolder = folder.replace(/^\/+/, "").replace(/\.\./g, "");
-  const uploadsRoot = path.join(process.cwd(), "public", "uploads", sanitizedFolder);
+export async function uploadToLocalDisk(
+  file: File,
+  folder: string,
+  type: DetectedFileType,
+): Promise<UploadResult> {
+  const publicRoot = path.join(process.cwd(), "public", "uploads");
+  const uploadsRoot = path.resolve(publicRoot, folder.replace(/^\/+/, ""));
+  if (!uploadsRoot.startsWith(publicRoot + path.sep)) {
+    throw new Error("Invalid upload folder");
+  }
   await fs.mkdir(uploadsRoot, { recursive: true });
 
-  const fileName = `${Date.now()}-${safeFileName(file.name)}`;
+  // The extension comes from the detected type, never from the client's file name.
+  const fileName = `${Date.now()}-${randomUUID().slice(0, 8)}-${storedFileName(file.name, type)}`;
   const absolutePath = path.join(uploadsRoot, fileName);
-  const buffer = Buffer.from(await file.arrayBuffer());
-  await fs.writeFile(absolutePath, buffer);
+  await fs.writeFile(absolutePath, Buffer.from(await file.arrayBuffer()));
 
-  const publicPath = `/uploads/${sanitizedFolder}/${fileName}`.replace(/\/+/g, "/");
+  const publicPath = `/uploads/${path.relative(publicRoot, absolutePath).split(path.sep).join("/")}`;
 
   // Relative so next/image treats it as a local asset (remotePatterns only allows ImageKit).
   return {

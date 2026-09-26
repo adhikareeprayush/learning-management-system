@@ -1,7 +1,10 @@
 import type { OrgRole } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { notifyCertificateIssued } from "@/lib/email-notifications";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { enrollUserInCourse } from "@/lib/enrollments";
+
+export { formatLevel } from "@/lib/format";
 
 export type RoadmapCourseProgress = {
   id: string;
@@ -41,11 +44,17 @@ export type RoadmapDetail = {
   certificateId: string | null;
 };
 
-export function formatLevel(level: string) {
-  if (level === "BEGINNER") return "Beginner";
-  if (level === "INTERMEDIATE") return "Intermediate";
-  if (level === "ADVANCED") return "Advanced";
-  return level;
+/**
+ * A course counts as done on a path only once its certificate is issued, so
+ * the path certificate carries the same bar (all lessons and quizzes).
+ */
+async function certifiedCourseIds(studentId: string, courseIds: string[]) {
+  if (courseIds.length === 0) return new Set<string>();
+  const certs = await prisma.certificate.findMany({
+    where: { studentId, courseId: { in: courseIds } },
+    select: { courseId: true },
+  });
+  return new Set(certs.map((c) => c.courseId));
 }
 
 export async function maybeIssueRoadmapCertificate(
@@ -62,24 +71,8 @@ export async function maybeIssueRoadmapCertificate(
   if (items.length === 0) return null;
 
   const courseIds = items.map((item) => item.courseId);
-  const [certs, enrollments] = await Promise.all([
-    prisma.certificate.findMany({
-      where: { studentId, courseId: { in: courseIds } },
-      select: { courseId: true },
-    }),
-    prisma.enrollment.findMany({
-      where: { studentId, courseId: { in: courseIds } },
-      select: { courseId: true, progress: true },
-    }),
-  ]);
-
-  const certSet = new Set(certs.map((c) => c.courseId));
-  const progressMap = new Map(enrollments.map((e) => [e.courseId, e.progress]));
-
-  const allDone = courseIds.every(
-    (id) => certSet.has(id) || (progressMap.get(id) ?? 0) >= 100,
-  );
-  if (!allDone) return null;
+  const certSet = await certifiedCourseIds(studentId, courseIds);
+  if (!courseIds.every((id) => certSet.has(id))) return null;
 
   const existing = await prisma.roadmapCertificate.findUnique({
     where: {
@@ -88,14 +81,26 @@ export async function maybeIssueRoadmapCertificate(
   });
   if (existing) return existing;
 
+  const [student, roadmap] = await Promise.all([
+    prisma.user.findUnique({ where: { id: studentId }, select: { name: true } }),
+    prisma.roadmap.findUnique({ where: { id: roadmapId }, select: { title: true } }),
+  ]);
+  if (!student || !roadmap) return null;
+
   try {
-    return await prisma.roadmapCertificate.create({
+    const certificate = await prisma.roadmapCertificate.create({
       data: {
         studentId,
         roadmapId,
         issuedAt: new Date(),
+        // Snapshot: later renames or course changes must not rewrite it.
+        holderName: student.name,
+        roadmapTitle: roadmap.title,
+        courseCount: courseIds.length,
       },
     });
+    notifyCertificateIssued({ kind: "roadmap", certificateId: certificate.id });
+    return certificate;
   } catch (error) {
     // Concurrent sync / multi-course completion can race on create.
     const code =
@@ -276,7 +281,7 @@ export async function getRoadmapDetail(
       order: item.order,
       enrolled: enrollmentProgress.has(item.course.id),
       progress,
-      completed: hasCertificate || progress >= 100,
+      completed: hasCertificate,
       hasCertificate,
     };
   });
@@ -322,26 +327,8 @@ export async function recalculateRoadmapProgress(
   if (items.length === 0) return 0;
 
   const courseIds = items.map((item) => item.courseId);
-  const [certs, enrollments] = await Promise.all([
-    prisma.certificate.findMany({
-      where: { studentId, courseId: { in: courseIds } },
-      select: { courseId: true },
-    }),
-    prisma.enrollment.findMany({
-      where: { studentId, courseId: { in: courseIds } },
-      select: { courseId: true, progress: true },
-    }),
-  ]);
-
-  const certSet = new Set(certs.map((c) => c.courseId));
-  const progressMap = new Map(enrollments.map((e) => [e.courseId, e.progress]));
-
-  let completed = 0;
-  for (const courseId of courseIds) {
-    if (certSet.has(courseId) || (progressMap.get(courseId) ?? 0) >= 100) {
-      completed += 1;
-    }
-  }
+  const certSet = await certifiedCourseIds(studentId, courseIds);
+  const completed = courseIds.filter((id) => certSet.has(id)).length;
 
   const progress = Math.round((completed / courseIds.length) * 100);
 

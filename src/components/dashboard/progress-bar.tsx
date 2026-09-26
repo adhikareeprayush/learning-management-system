@@ -4,7 +4,7 @@ type ProgressBarProps = {
 };
 
 export function ProgressBar({ value, label }: ProgressBarProps) {
-  const clamped = Math.max(0, Math.min(100, value));
+  const clamped = Math.round(Math.max(0, Math.min(100, value)));
   return (
     <div>
       {label ? (

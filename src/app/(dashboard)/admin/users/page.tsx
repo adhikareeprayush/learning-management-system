@@ -1,81 +1,57 @@
-import type { Prisma, Role } from "@prisma/client";
+import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
-import { requireAdminPage } from "@/lib/page-guards";
-import AdminUsersClient, { type AdminUser } from "./users-client";
+import { loginRedirectPath, requireAdminPage } from "@/lib/page-guards";
+import { resolveTenantFromHeaders } from "@/lib/tenant";
+import { listAdminUsers, parseUserRole, parseUserStatus } from "@/lib/user-admin";
+import AdminUsersClient from "./users-client";
 
 const PAGE_SIZE = 25;
-const ROLES: Role[] = ["STUDENT", "INSTRUCTOR", "ADMIN"];
 
 type Props = {
-  searchParams: Promise<{ q?: string; role?: string; page?: string }>;
+  searchParams: Promise<{ q?: string; role?: string; status?: string; page?: string }>;
 };
+
+export const metadata: Metadata = { title: "Users" };
 
 export default async function AdminUsersPage({ searchParams }: Props) {
   const session = await requireAdminPage();
 
+  const ctx = await resolveTenantFromHeaders();
+  if (!ctx) redirect(await loginRedirectPath());
+
   const params = await searchParams;
   const q = params.q?.trim().slice(0, 200) ?? "";
-  const role = ROLES.find((value) => value === params.role?.toUpperCase()) ?? null;
-  const requestedPage = Math.max(1, Math.floor(Number(params.page)) || 1);
+  const role = parseUserRole(params.role);
+  const status = parseUserStatus(params.status);
 
-  const where: Prisma.UserWhereInput = {
-    ...(role ? { role } : {}),
-    ...(q
-      ? {
-          OR: [
-            { name: { contains: q, mode: "insensitive" } },
-            { email: { contains: q, mode: "insensitive" } },
-          ],
-        }
-      : {}),
-  };
-
-  const total = await prisma.user.count({ where });
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const page = Math.min(requestedPage, pageCount);
-
-  const users = await prisma.user.findMany({
-    where,
-    orderBy: [{ createdAt: "desc" }, { id: "asc" }],
-    skip: (page - 1) * PAGE_SIZE,
-    take: PAGE_SIZE,
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      image: true,
-      role: true,
-      emailVerified: true,
-      createdAt: true,
-      _count: {
-        select: {
-          enrollments: true,
-          courseTeaching: true,
-        },
-      },
-    },
-  });
-
-  const initialUsers: AdminUser[] = users.map((user) => ({
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    image: user.image,
-    role: user.role,
-    emailVerified: user.emailVerified,
-    joinedAt: user.createdAt.toISOString(),
-    enrollmentCount: user._count.enrollments,
-    courseCount: user._count.courseTeaching,
-  }));
+  const [{ users, total, page, pageCount }, courses] = await Promise.all([
+    listAdminUsers(ctx.organizationId, {
+      q,
+      role,
+      status,
+      page: Math.floor(Number(params.page)) || 1,
+      pageSize: PAGE_SIZE,
+    }),
+    // Options for the "grant access" picker in the user dialog.
+    prisma.course.findMany({
+      where: { organizationId: ctx.organizationId, status: "PUBLISHED" },
+      orderBy: { title: "asc" },
+      take: 500,
+      select: { id: true, title: true },
+    }),
+  ]);
 
   return (
     <AdminUsersClient
       // Remount on navigation so local list state follows the new query.
-      key={`${q}|${role ?? ""}|${page}`}
+      key={`${q}|${role ?? ""}|${status ?? ""}|${page}`}
       currentUserId={session.user.id}
       initialQuery={q}
       initialRole={role ?? "ALL"}
-      initialUsers={initialUsers}
+      initialStatus={status ?? "ALL"}
+      initialUsers={users}
+      grantableCourses={courses}
       page={page}
       pageCount={pageCount}
       pageSize={PAGE_SIZE}

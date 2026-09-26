@@ -20,7 +20,18 @@ function planLabel(role: string | undefined) {
   return "Student";
 }
 
-export function Sidebar() {
+const sectionLabels = {
+  student: "Student",
+  instructor: "Instructor",
+  admin: "Admin",
+} as const;
+
+type SidebarProps = {
+  brandName?: string;
+  logoUrl?: string | null;
+};
+
+export function Sidebar({ brandName, logoUrl }: SidebarProps = {}) {
   const pathname = usePathname();
   const role = roleFromPath(pathname);
   const groups = navForRole(role);
@@ -30,6 +41,11 @@ export function Sidebar() {
     image: sessionUser?.image ?? null,
     plan: planLabel(sessionUser?.role),
   };
+  // Admins can open other dashboards; only then is the section worth naming.
+  const roleLine =
+    sectionLabels[role] === profile.plan
+      ? profile.plan
+      : `${profile.plan} · ${sectionLabels[role]} view`;
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -38,7 +54,7 @@ export function Sidebar() {
   return (
     <>
       <div className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-black/5 bg-white px-4 py-3 lg:hidden">
-        <Logo markClassName="size-8" />
+        <Logo markClassName="size-8" name={brandName} logoUrl={logoUrl} />
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -68,11 +84,16 @@ export function Sidebar() {
             collapsed ? "lg:flex-col lg:justify-center lg:gap-2 lg:px-2" : ""
           }`}
         >
-          <div className={collapsed ? "lg:flex lg:justify-center" : "min-w-0"}>
+          <div className={collapsed ? "lg:flex lg:justify-center" : "min-w-0 flex-1"}>
             {collapsed ? (
-              <Logo markClassName="size-9" markOnly />
+              <Logo markClassName="size-9" markOnly name={brandName} logoUrl={logoUrl} />
             ) : (
-              <Logo markClassName="size-8" />
+              <Logo
+                markClassName="size-8"
+                textClassName="text-lg lg:text-base"
+                name={brandName}
+                logoUrl={logoUrl}
+              />
             )}
           </div>
           <div
@@ -118,18 +139,14 @@ export function Sidebar() {
                 <p className="truncate text-sm font-semibold text-[#1b2336]">
                   {profile.name}
                 </p>
-                <p className="truncate text-xs capitalize text-muted">
-                  {role} · {profile.plan}
-                </p>
+                <p className="truncate text-xs text-muted">{roleLine}</p>
               </div>
             ) : (
               <div className="min-w-0 lg:hidden">
                 <p className="truncate text-sm font-semibold text-[#1b2336]">
                   {profile.name}
                 </p>
-                <p className="truncate text-xs capitalize text-muted">
-                  {role} · {profile.plan}
-                </p>
+                <p className="truncate text-xs text-muted">{roleLine}</p>
               </div>
             )}
           </Link>

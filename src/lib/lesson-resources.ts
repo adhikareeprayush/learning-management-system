@@ -1,3 +1,4 @@
+import { parseMediaUrl, type MediaUrlResult } from "@/lib/media-url";
 import type { QuizPayload, QuizQuestion } from "@/types/lesson-resource";
 
 const DEFAULT_PASSING_SCORE = 70;
@@ -133,4 +134,16 @@ export function sanitizeQuizAnswers(
     }
   }
   return answers;
+}
+
+/**
+ * Validates a resource's URL for its type. Video resources take YouTube or an
+ * uploaded file; downloads and exercises take an uploaded file or an external
+ * link; quizzes have no URL. Empty is allowed (normalized to "").
+ */
+export function parseResourceUrl(type: string, value: unknown): MediaUrlResult {
+  if (type === "QUIZ") return { ok: true, url: "" };
+  if (type === "VIDEO") return parseMediaUrl(value, "video");
+  const file = parseMediaUrl(value, "file");
+  return file.ok ? file : parseMediaUrl(value, "link");
 }

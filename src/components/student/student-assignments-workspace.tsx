@@ -12,6 +12,8 @@ import {
   X,
 } from "lucide-react";
 import { FlashBanner } from "@/components/ui/flash-banner";
+import { formatDateTime } from "@/lib/format";
+import { UPLOAD_ACCEPT, uploadFile } from "@/lib/upload-client";
 
 type SubmissionStatus = "PENDING" | "SUBMITTED" | "GRADED";
 
@@ -60,16 +62,6 @@ const statusStyles: Record<AssignmentStatus, string> = {
   Graded: "bg-violet-50 text-violet-700",
 };
 
-const acceptedFiles =
-  ".pdf,.txt,.zip,image/jpeg,image/png,image/webp,image/gif,image/avif";
-
-const dateFormatter = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-  timeZone: "UTC",
-});
-
 function assignmentStatus(
   assignment: StudentAssignmentItem,
   now: number,
@@ -89,6 +81,38 @@ function assignmentStatus(
 
 function isGraded(assignment: StudentAssignmentItem) {
   return assignment.submission?.status === "GRADED";
+}
+
+/** Submitted (or last resubmitted) after the deadline. */
+function isLate(assignment: StudentAssignmentItem) {
+  if (!assignment.submission || !assignment.dueDate) return false;
+  return (
+    new Date(assignment.submission.submittedAt).getTime() >
+    new Date(assignment.dueDate).getTime()
+  );
+}
+
+function StatusBadges({
+  assignment,
+  status,
+}: {
+  assignment: StudentAssignmentItem;
+  status: AssignmentStatus;
+}) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span
+        className={`rounded-md px-2.5 py-1 text-xs font-semibold ${statusStyles[status]}`}
+      >
+        {status}
+      </span>
+      {isLate(assignment) ? (
+        <span className="rounded-md bg-orange-50 px-2 py-1 text-xs font-semibold text-orange-700">
+          Late
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 function submissionActionLabel(assignment: StudentAssignmentItem) {
@@ -137,12 +161,8 @@ function SubmittedWork({ submission }: { submission: StudentSubmission }) {
   );
 }
 
-function formatDate(value: string | null) {
-  if (!value) return "No deadline";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "No deadline";
-
-  return dateFormatter.format(date);
+function formatDue(value: string | null) {
+  return formatDateTime(value, "No deadline");
 }
 
 function isHttpUrl(value: string | null): value is string {
@@ -229,26 +249,7 @@ export function StudentAssignmentsWorkspace({
       let uploadedUrl = fileUrl;
 
       if (file) {
-        const form = new FormData();
-        form.set("file", file);
-        form.set("provider", "imagekit");
-        form.set("purpose", "submission");
-
-        const uploadResponse = await fetch("/api/upload", {
-          method: "POST",
-          body: form,
-        });
-        if (!uploadResponse.ok) {
-          throw new Error(await responseError(uploadResponse));
-        }
-
-        const uploadBody = (await uploadResponse.json()) as {
-          upload?: { url?: unknown };
-        };
-        if (typeof uploadBody.upload?.url !== "string") {
-          throw new Error("The file uploaded, but no file URL was returned.");
-        }
-        uploadedUrl = uploadBody.upload.url;
+        uploadedUrl = (await uploadFile(file, "submission")).url;
         setFileUrl(uploadedUrl);
         setFile(null);
       }
@@ -300,6 +301,186 @@ export function StudentAssignmentsWorkspace({
     }
   }
 
+  function closeEditor() {
+    setEditingId(null);
+    setError(null);
+  }
+
+  /** Brief, grade/feedback or the submission form — shared by the card and table layouts. */
+  function renderPanel(assignment: StudentAssignmentItem) {
+    const isBusy = busyId === assignment.id;
+    const submission = assignment.submission;
+
+    return (
+      <form
+        onSubmit={(event) => submitAssignment(event, assignment)}
+        className="space-y-4"
+      >
+        <div>
+          <h2 className="font-semibold text-brand-navy">
+            {submission ? "Your submission" : "Submit assignment"}
+          </h2>
+          <p className="mt-0.5 text-xs text-muted">
+            Due {formatDue(assignment.dueDate)}
+          </p>
+          {assignment.description ? (
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-muted">
+              {assignment.description}
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-muted">
+              Your instructor did not add a description.
+            </p>
+          )}
+        </div>
+
+        {submission ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-black/5 bg-white px-3 py-2 text-xs text-muted">
+            <span>
+              Submitted {formatDateTime(submission.submittedAt)}
+              {submission.status === "GRADED" && submission.gradedAt
+                ? ` · Graded ${formatDateTime(submission.gradedAt)}`
+                : ""}
+            </span>
+            {isLate(assignment) ? (
+              <span className="rounded-md bg-orange-50 px-2 py-0.5 font-semibold text-orange-700">
+                Late
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        {submission && isGraded(assignment) ? (
+          <>
+            <GradeSummary submission={submission} />
+            <SubmittedWork submission={submission} />
+            <p className="text-xs text-muted">
+              Graded work can&apos;t be resubmitted.
+            </p>
+          </>
+        ) : (
+          <>
+            <label className="block">
+              <span className="text-sm font-semibold text-brand-navy">
+                Written response
+              </span>
+              <textarea
+                value={content}
+                onChange={(event) => setContent(event.target.value)}
+                rows={6}
+                maxLength={50_000}
+                disabled={isBusy}
+                placeholder="Write your response, notes, or a link for your instructor…"
+                className="mt-2 w-full resize-y rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm text-brand-navy outline-none transition placeholder:text-muted/70 focus:border-brand-purple/40 focus:ring-2 focus:ring-brand-purple/10 disabled:opacity-60"
+              />
+            </label>
+
+            <div>
+              <p className="text-sm font-semibold text-brand-navy">Attachment</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-brand-navy transition hover:bg-surface">
+                  <FileUp className="size-4 text-brand-purple" />
+                  {file || fileUrl ? "Replace file" : "Choose file"}
+                  <input
+                    key={`${assignment.id}-${file?.name ?? "empty"}-${file?.lastModified ?? 0}`}
+                    type="file"
+                    accept={UPLOAD_ACCEPT.document}
+                    disabled={isBusy}
+                    className="sr-only"
+                    onChange={(event) => {
+                      setFile(event.target.files?.[0] ?? null);
+                      setError(null);
+                    }}
+                  />
+                </label>
+
+                {file ? (
+                  <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 text-xs text-muted">
+                    <Paperclip className="size-3.5 shrink-0" />
+                    <span className="max-w-56 truncate">{file.name}</span>
+                    <button
+                      type="button"
+                      onClick={removeFile}
+                      disabled={isBusy}
+                      className="ml-1 rounded text-muted transition hover:text-red-600"
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </span>
+                ) : isHttpUrl(fileUrl) ? (
+                  <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 text-xs text-muted">
+                    <Paperclip className="size-3.5 shrink-0" />
+                    <a
+                      href={fileUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex max-w-56 items-center gap-1 truncate font-semibold text-brand-purple hover:text-brand-teal"
+                    >
+                      <span className="truncate">{fileNameFromUrl(fileUrl)}</span>
+                      <ExternalLink className="size-3 shrink-0" />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={removeFile}
+                      disabled={isBusy}
+                      className="ml-1 rounded text-muted transition hover:text-red-600"
+                      aria-label="Remove uploaded file"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-1.5 text-xs text-muted">
+                PDF, Word, PowerPoint, Excel, text, ZIP, or image. Files upload
+                when you submit.
+              </p>
+            </div>
+
+            {error ? (
+              <p
+                role="alert"
+                className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700"
+              >
+                {error}
+              </p>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="submit"
+                disabled={isBusy}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white transition hover:bg-brand-purple disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isBusy ? <Loader2 className="size-4 animate-spin" /> : null}
+                {isBusy
+                  ? file
+                    ? "Uploading and saving…"
+                    : "Saving…"
+                  : submission
+                    ? "Update submission"
+                    : "Submit assignment"}
+              </button>
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={closeEditor}
+                className="h-10 rounded-xl px-3 text-sm font-semibold text-muted transition hover:bg-white hover:text-brand-navy disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </>
+        )}
+      </form>
+    );
+  }
+
+  const editing = editingId
+    ? (assignments.find((item) => item.id === editingId) ?? null)
+    : null;
+
   return (
     <>
       <FlashBanner message={flash} onDismiss={() => setFlash(null)} />
@@ -308,7 +489,8 @@ export function StudentAssignmentsWorkspace({
         <ClipboardList className="size-4 text-brand-purple" />
         <span>
           <strong className="text-brand-navy">{assignments.length}</strong>{" "}
-          {assignments.length === 1 ? "item" : "items"} in your queue
+          {assignments.length === 1 ? "item" : "items"} in your queue · times
+          in Nepal time (NPT)
         </span>
       </div>
 
@@ -341,14 +523,10 @@ export function StudentAssignmentsWorkspace({
                         {assignment.course.title}
                       </p>
                       <p className="mt-1 text-xs text-muted">
-                        Due {formatDate(assignment.dueDate)}
+                        Due {formatDue(assignment.dueDate)}
                       </p>
                     </div>
-                    <span
-                      className={`shrink-0 rounded-md px-2.5 py-1 text-xs font-semibold ${statusStyles[status]}`}
-                    >
-                      {status}
-                    </span>
+                    <StatusBadges assignment={assignment} status={status} />
                   </div>
                   {assignment.submission?.status === "GRADED" &&
                   assignment.submission.grade !== null ? (
@@ -373,362 +551,97 @@ export function StudentAssignmentsWorkspace({
                       {isEditing ? "Close" : submissionActionLabel(assignment)}
                     </button>
                   </div>
+                  {isEditing ? (
+                    <div className="mt-4 rounded-2xl border border-black/5 bg-surface/40 p-4">
+                      {renderPanel(assignment)}
+                    </div>
+                  ) : null}
                 </article>
               );
             })}
           </div>
 
-          {editingId ? (
-            <div className="rounded-2xl border border-black/5 bg-surface/40 p-4 lg:hidden">
-              {(() => {
-                const assignment = assignments.find((item) => item.id === editingId);
-                if (!assignment) return null;
-                const isBusy = busyId === assignment.id;
-                if (assignment.submission && isGraded(assignment)) {
-                  return (
-                    <div className="space-y-4">
-                      <h2 className="font-semibold text-brand-navy">
-                        Graded submission
-                      </h2>
-                      <GradeSummary submission={assignment.submission} />
-                      <SubmittedWork submission={assignment.submission} />
-                      <p className="text-xs text-muted">
-                        Graded work can&apos;t be resubmitted.
-                      </p>
-                    </div>
-                  );
-                }
-                return (
-                  <form
-                    onSubmit={(event) => submitAssignment(event, assignment)}
-                    className="space-y-4"
-                    id={`submission-mobile-${assignment.id}`}
-                  >
-                    <div>
-                      <h2 className="font-semibold text-brand-navy">
-                        {assignment.submission
-                          ? "Your submission"
-                          : "Submit assignment"}
-                      </h2>
-                      {assignment.description ? (
-                        <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted">
-                          {assignment.description}
-                        </p>
-                      ) : (
-                        <p className="mt-1 text-sm text-muted">
-                          Your instructor did not add a description.
-                        </p>
-                      )}
-                    </div>
-                    <label className="block">
-                      <span className="text-sm font-semibold text-brand-navy">
-                        Written response
-                      </span>
-                      <textarea
-                        value={content}
-                        onChange={(event) => setContent(event.target.value)}
-                        rows={6}
-                        maxLength={50_000}
-                        disabled={isBusy}
-                        placeholder="Write your response, notes, or a link for your instructor…"
-                        className="mt-2 w-full resize-y rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm text-brand-navy outline-none transition placeholder:text-muted/70 focus:border-brand-purple/40 focus:ring-2 focus:ring-brand-purple/10 disabled:opacity-60"
-                      />
-                    </label>
-                    {error ? (
-                      <p
-                        role="alert"
-                        className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700"
-                      >
-                        {error}
-                      </p>
-                    ) : null}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="submit"
-                        disabled={isBusy}
-                        className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white transition hover:bg-brand-purple disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {isBusy ? (
-                          <Loader2 className="size-4 animate-spin" />
-                        ) : null}
-                        {isBusy ? "Saving…" : "Submit assignment"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => {
-                          setEditingId(null);
-                          setError(null);
-                        }}
-                        className="h-10 rounded-xl px-3 text-sm font-semibold text-muted transition hover:bg-white hover:text-brand-navy disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </form>
-                );
-              })()}
-            </div>
-          ) : null}
-
           <div className="hidden overflow-hidden rounded-2xl border border-black/5 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)] lg:block">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
-              <thead className="bg-surface/80 text-muted">
-                <tr>
-                  <th className="px-4 py-3 font-medium sm:px-5">Title</th>
-                  <th className="px-4 py-3 font-medium sm:px-5">Course</th>
-                  <th className="px-4 py-3 font-medium sm:px-5">Due</th>
-                  <th className="px-4 py-3 font-medium sm:px-5">Status</th>
-                  <th className="px-4 py-3 font-medium sm:px-5">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {assignments.map((assignment) => {
-                  const status = assignmentStatus(assignment, nowTimestamp);
-                  const isEditing = editingId === assignment.id;
-                  const isBusy = busyId === assignment.id;
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-left text-sm">
+                <thead className="bg-surface/80 text-muted">
+                  <tr>
+                    <th className="px-4 py-3 font-medium sm:px-5">Title</th>
+                    <th className="px-4 py-3 font-medium sm:px-5">Course</th>
+                    <th className="px-4 py-3 font-medium sm:px-5">Due</th>
+                    <th className="px-4 py-3 font-medium sm:px-5">Status</th>
+                    <th className="px-4 py-3 font-medium sm:px-5">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {assignments.map((assignment) => {
+                    const status = assignmentStatus(assignment, nowTimestamp);
+                    const isEditing = editing?.id === assignment.id;
 
-                  return (
-                    <Fragment key={assignment.id}>
-                      <tr className="border-t border-black/5 transition hover:bg-surface/50">
-                        <td className="px-4 py-4 font-medium text-[#324361] sm:px-5">
-                          {assignment.title}
-                        </td>
-                        <td className="px-4 py-4 text-muted sm:px-5">
-                          {assignment.course.title}
-                        </td>
-                        <td className="px-4 py-4 text-muted sm:px-5">
-                          {formatDate(assignment.dueDate)}
-                        </td>
-                        <td className="px-4 py-4 sm:px-5">
-                          <span
-                            className={`rounded-md px-2.5 py-1 text-xs font-semibold ${statusStyles[status]}`}
-                          >
-                            {status}
-                          </span>
-                          {assignment.submission?.status === "GRADED" &&
-                          assignment.submission.grade !== null ? (
-                            <span className="ml-2 text-xs font-semibold text-brand-navy">
-                              {assignment.submission.grade}%
-                            </span>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-4 sm:px-5">
-                          <div className="flex flex-wrap gap-2">
-                            <Link
-                              href={`/student/courses/${assignment.course.slug}`}
-                              className="rounded-lg border border-black/8 px-2.5 py-1 text-xs font-semibold text-brand-navy transition hover:bg-surface"
-                            >
-                              Open course
-                            </Link>
-                            <button
-                              type="button"
-                              onClick={() => openSubmission(assignment)}
-                              disabled={busyId !== null}
-                              aria-expanded={isEditing}
-                              aria-controls={`submission-${assignment.id}`}
-                              className="rounded-lg border border-black/8 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {isEditing
-                                ? "Close"
-                                : submissionActionLabel(assignment)}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-
-                      {isEditing ? (
-                        <tr
-                          id={`submission-${assignment.id}`}
-                          className="border-t border-black/5 bg-surface/40"
-                        >
-                          <td colSpan={5} className="px-4 py-5 sm:px-5">
-                            <form
-                              onSubmit={(event) =>
-                                submitAssignment(event, assignment)
-                              }
-                              className="mx-auto max-w-3xl space-y-4"
-                            >
-                              <div>
-                                <h2 className="font-semibold text-brand-navy">
-                                  {assignment.submission
-                                    ? "Your submission"
-                                    : "Submit assignment"}
-                                </h2>
-                                {assignment.description ? (
-                                  <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted">
-                                    {assignment.description}
-                                  </p>
-                                ) : (
-                                  <p className="mt-1 text-sm text-muted">
-                                    Your instructor did not add a description.
-                                  </p>
-                                )}
-                              </div>
-
-                              {assignment.submission ? (
-                                <div className="rounded-xl border border-black/5 bg-white px-3 py-2 text-xs text-muted">
-                                  Submitted{" "}
-                                  {formatDate(
-                                    assignment.submission.submittedAt,
-                                  )}
-                                  {assignment.submission.status === "GRADED" &&
-                                  assignment.submission.gradedAt
-                                    ? ` · Graded ${formatDate(assignment.submission.gradedAt)}`
-                                    : ""}
-                                </div>
-                              ) : null}
-
-                              {assignment.submission && isGraded(assignment) ? (
-                                <>
-                                  <GradeSummary submission={assignment.submission} />
-                                  <SubmittedWork submission={assignment.submission} />
-                                  <p className="text-xs text-muted">
-                                    Graded work can&apos;t be resubmitted.
-                                  </p>
-                                </>
-                              ) : (
-                                <>
-                                  <label className="block">
-                                    <span className="text-sm font-semibold text-brand-navy">
-                                      Written response
-                                    </span>
-                                    <textarea
-                                      value={content}
-                                      onChange={(event) => setContent(event.target.value)}
-                                      rows={6}
-                                      maxLength={50_000}
-                                      disabled={isBusy}
-                                      placeholder="Write your response, notes, or a link for your instructor…"
-                                      className="mt-2 w-full resize-y rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm text-brand-navy outline-none transition placeholder:text-muted/70 focus:border-brand-purple/40 focus:ring-2 focus:ring-brand-purple/10 disabled:opacity-60"
-                                    />
-                                  </label>
-
-                                  <div>
-                                    <p className="text-sm font-semibold text-brand-navy">
-                                      Attachment
-                                    </p>
-                                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-black/10 bg-white px-3 py-2 text-sm font-semibold text-brand-navy transition hover:bg-surface">
-                                        <FileUp className="size-4 text-brand-purple" />
-                                        {file || fileUrl
-                                          ? "Replace file"
-                                          : "Choose file"}
-                                        <input
-                                          key={`${assignment.id}-${file?.name ?? "empty"}-${file?.lastModified ?? 0}`}
-                                          type="file"
-                                          accept={acceptedFiles}
-                                          disabled={isBusy}
-                                          className="sr-only"
-                                          onChange={(event) => {
-                                            const selectedFile =
-                                              event.target.files?.[0] ?? null;
-                                            setFile(selectedFile);
-                                            setError(null);
-                                          }}
-                                        />
-                                      </label>
-
-                                      {file ? (
-                                        <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 text-xs text-muted">
-                                          <Paperclip className="size-3.5 shrink-0" />
-                                          <span className="max-w-56 truncate">
-                                            {file.name}
-                                          </span>
-                                          <button
-                                            type="button"
-                                            onClick={removeFile}
-                                            disabled={isBusy}
-                                            className="ml-1 rounded text-muted transition hover:text-red-600"
-                                            aria-label={`Remove ${file.name}`}
-                                          >
-                                            <X className="size-3.5" />
-                                          </button>
-                                        </span>
-                                      ) : isHttpUrl(fileUrl) ? (
-                                        <span className="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-white px-2.5 py-2 text-xs text-muted">
-                                          <Paperclip className="size-3.5 shrink-0" />
-                                          <a
-                                            href={fileUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="inline-flex max-w-56 items-center gap-1 truncate font-semibold text-brand-purple hover:text-brand-teal"
-                                          >
-                                            <span className="truncate">
-                                              {fileNameFromUrl(fileUrl)}
-                                            </span>
-                                            <ExternalLink className="size-3 shrink-0" />
-                                          </a>
-                                          <button
-                                            type="button"
-                                            onClick={removeFile}
-                                            disabled={isBusy}
-                                            className="ml-1 rounded text-muted transition hover:text-red-600"
-                                            aria-label="Remove uploaded file"
-                                          >
-                                            <X className="size-3.5" />
-                                          </button>
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                    <p className="mt-1.5 text-xs text-muted">
-                                      PDF, text, ZIP, or image. Files upload securely
-                                      when you submit.
-                                    </p>
-                                  </div>
-
-                                  {error ? (
-                                    <p
-                                      role="alert"
-                                      className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700"
-                                    >
-                                      {error}
-                                    </p>
-                                  ) : null}
-
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <button
-                                      type="submit"
-                                      disabled={isBusy}
-                                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-brand-blue px-4 text-sm font-semibold text-white transition hover:bg-brand-purple disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      {isBusy ? (
-                                        <Loader2 className="size-4 animate-spin" />
-                                      ) : null}
-                                      {isBusy
-                                        ? file
-                                          ? "Uploading and saving…"
-                                          : "Saving…"
-                                        : assignment.submission
-                                          ? "Update submission"
-                                          : "Submit assignment"}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={isBusy}
-                                      onClick={() => {
-                                        setEditingId(null);
-                                        setError(null);
-                                      }}
-                                      className="h-10 rounded-xl px-3 text-sm font-semibold text-muted transition hover:bg-white hover:text-brand-navy disabled:opacity-50"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </>
-                              )}
-                            </form>
+                    return (
+                      <Fragment key={assignment.id}>
+                        <tr className="border-t border-black/5 transition hover:bg-surface/50">
+                          <td className="px-4 py-4 font-medium text-[#324361] sm:px-5">
+                            {assignment.title}
+                          </td>
+                          <td className="px-4 py-4 text-muted sm:px-5">
+                            {assignment.course.title}
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-4 text-muted sm:px-5">
+                            {formatDue(assignment.dueDate)}
+                          </td>
+                          <td className="px-4 py-4 sm:px-5">
+                            <StatusBadges assignment={assignment} status={status} />
+                            {assignment.submission?.status === "GRADED" &&
+                            assignment.submission.grade !== null ? (
+                              <span className="ml-2 text-xs font-semibold text-brand-navy">
+                                {assignment.submission.grade}%
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="px-4 py-4 sm:px-5">
+                            <div className="flex flex-wrap gap-2">
+                              <Link
+                                href={`/student/courses/${assignment.course.slug}`}
+                                className="rounded-lg border border-black/8 px-2.5 py-1 text-xs font-semibold text-brand-navy transition hover:bg-surface"
+                              >
+                                Open course
+                              </Link>
+                              <button
+                                type="button"
+                                onClick={() => openSubmission(assignment)}
+                                disabled={busyId !== null}
+                                aria-expanded={isEditing}
+                                aria-controls={`submission-${assignment.id}`}
+                                className="rounded-lg border border-black/8 px-2.5 py-1 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isEditing
+                                  ? "Close"
+                                  : submissionActionLabel(assignment)}
+                              </button>
+                            </div>
                           </td>
                         </tr>
-                      ) : null}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+
+                        {isEditing ? (
+                          <tr
+                            id={`submission-${assignment.id}`}
+                            className="border-t border-black/5 bg-surface/40"
+                          >
+                            <td colSpan={5} className="px-4 py-5 sm:px-5">
+                              <div className="mx-auto max-w-3xl">
+                                {renderPanel(assignment)}
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
         </>
       )}
 

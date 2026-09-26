@@ -1,7 +1,8 @@
 import { cache } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ShieldAlert, ShieldCheck } from "lucide-react";
+import { notFound } from "next/navigation";
+import { ShieldCheck } from "lucide-react";
 import { CertificatePreview } from "@/components/certificate/certificate-preview";
 import {
   courseCertificateContent,
@@ -9,9 +10,9 @@ import {
   roadmapCertificateContent,
   type CertificateContent,
 } from "@/lib/certificate-design";
+import { certificateVerifyUrl } from "@/lib/certificates";
 import { prisma } from "@/lib/db";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
-import { CredentialForm } from "../credential-form";
 
 type Props = { params: Promise<{ credentialId: string }> };
 
@@ -41,6 +42,9 @@ const findCredential = cache(
         select: {
           credentialId: true,
           issuedAt: true,
+          holderName: true,
+          courseTitle: true,
+          instructorName: true,
           student: { select: { name: true } },
           course: {
             select: {
@@ -58,6 +62,9 @@ const findCredential = cache(
         select: {
           credentialId: true,
           issuedAt: true,
+          holderName: true,
+          roadmapTitle: true,
+          courseCount: true,
           student: { select: { name: true } },
           roadmap: {
             select: {
@@ -75,43 +82,51 @@ const findCredential = cache(
       }),
     ]);
 
+    // Issued snapshots win; live values only fill rows that predate them.
     if (courseCertificate) {
       const { course, student } = courseCertificate;
+      const holder = courseCertificate.holderName ?? student.name;
+      const title = courseCertificate.courseTitle ?? course.title;
       return {
         kind: "course",
-        holder: student.name,
-        title: course.title,
+        holder,
+        title,
         href: course.status === "PUBLISHED" ? `/courses/${course.slug}` : null,
         issuedAt: courseCertificate.issuedAt,
         issuer: tenant.organization.name,
         content: courseCertificateContent({
-          studentName: student.name,
-          courseTitle: course.title,
-          instructorName: course.instructor.name,
+          studentName: holder,
+          courseTitle: title,
+          instructorName:
+            courseCertificate.instructorName ?? course.instructor.name,
           category: course.category,
           credentialId: courseCertificate.credentialId,
           issuedAt: courseCertificate.issuedAt,
+          verifyUrl: certificateVerifyUrl(courseCertificate.credentialId),
         }),
       };
     }
 
     if (roadmapCertificate) {
       const { roadmap, student } = roadmapCertificate;
+      const holder = roadmapCertificate.holderName ?? student.name;
+      const title = roadmapCertificate.roadmapTitle ?? roadmap.title;
       return {
         kind: "roadmap",
-        holder: student.name,
-        title: roadmap.title,
+        holder,
+        title,
         href:
           roadmap.status === "PUBLISHED" ? `/roadmaps/${roadmap.slug}` : null,
         issuedAt: roadmapCertificate.issuedAt,
         issuer: tenant.organization.name,
         content: roadmapCertificateContent({
-          studentName: student.name,
-          roadmapTitle: roadmap.title,
-          courseCount: roadmap.courses.length,
+          studentName: holder,
+          roadmapTitle: title,
+          courseCount: roadmapCertificate.courseCount ?? roadmap.courses.length,
           category: roadmap.category,
           credentialId: roadmapCertificate.credentialId,
           issuedAt: roadmapCertificate.issuedAt,
+          verifyUrl: certificateVerifyUrl(roadmapCertificate.credentialId),
         }),
       };
     }
@@ -147,36 +162,7 @@ export default async function VerifyCredentialPage({ params }: Props) {
   const credentialId = decodeParam((await params).credentialId);
   const credential = await findCredential(credentialId);
 
-  if (!credential) {
-    return (
-      <div className="bg-[#f7f8fc] pb-20">
-        <div className="mx-auto max-w-2xl px-5 py-14">
-          <div className="rounded-3xl border border-red-200 bg-white p-6 shadow-sm md:p-8">
-            <div className="flex items-start gap-4">
-              <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-red-50 text-red-600">
-                <ShieldAlert className="size-6" />
-              </span>
-              <div className="min-w-0">
-                <h1 className="font-display text-2xl text-brand-navy">
-                  Credential not found
-                </h1>
-                <p className="mt-2 text-sm text-muted">
-                  No certificate issued by this institute matches{" "}
-                  <code className="break-all rounded bg-surface px-1.5 py-0.5 font-mono text-[13px] text-brand-navy">
-                    {credentialId || "(empty)"}
-                  </code>
-                  . Check the ID printed on the certificate and try again.
-                </p>
-              </div>
-            </div>
-            <div className="mt-6 border-t border-black/5 pt-6">
-              <CredentialForm defaultValue={credentialId} />
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (!credential) notFound();
 
   const details = [
     { label: "Awarded to", value: credential.holder },

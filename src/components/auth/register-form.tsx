@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { MailCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FlashBanner } from "@/components/ui/flash-banner";
 import { authClient } from "@/lib/auth-client";
@@ -14,6 +15,21 @@ import {
   studentCoursePath,
   studentRoadmapPath,
 } from "@/lib/enroll-client";
+import { authPageHref, safeNextPath } from "@/lib/safe-next";
+
+function signUpErrorMessage(error: {
+  code?: string;
+  message?: string;
+  status: number;
+}) {
+  if (error.status === 429) return "Too many attempts. Wait a minute and try again.";
+  if (error.code === "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL") {
+    return "An account with this email already exists. Sign in instead, or reset your password.";
+  }
+  if (error.code === "PASSWORD_TOO_SHORT") return "Use at least 8 characters for your password.";
+  if (error.code === "PASSWORD_TOO_LONG") return "Use at most 128 characters for your password.";
+  return error.message ?? "Could not create account";
+}
 
 export function RegisterForm() {
   const router = useRouter();
@@ -27,6 +43,7 @@ export function RegisterForm() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
+  const [checkInboxFor, setCheckInboxFor] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -34,25 +51,33 @@ export function RegisterForm() {
     setError("");
     setFlash(null);
 
-    const { error: signUpError } = await authClient.signUp.email({
+    const { data, error: signUpError } = await authClient.signUp.email({
       name,
       email,
       password,
+      callbackURL: "/email-verified",
     });
 
     if (signUpError) {
       setLoading(false);
-      setError(signUpError.message ?? "Could not create account");
+      setError(signUpErrorMessage(signUpError));
+      return;
+    }
+
+    // Verification is required before sign-in, so there's no session yet.
+    if (!data?.token) {
+      setLoading(false);
+      setCheckInboxFor(email.trim());
       return;
     }
 
     const joinRes = await fetch("/api/membership/join", { method: "POST" });
     if (!joinRes.ok) {
-      const data = (await joinRes.json().catch(() => ({}))) as {
+      const body = (await joinRes.json().catch(() => ({}))) as {
         error?: string;
       };
       setLoading(false);
-      setError(data.error || "Account created, but joining failed");
+      setError(body.error || "Account created, but joining failed");
       return;
     }
 
@@ -79,9 +104,41 @@ export function RegisterForm() {
       }
     }
 
-    setFlash("Account created — opening your student dashboard…");
-    router.push("/student");
+    const next = safeNextPath(searchParams.get("next"));
+    setFlash(
+      next
+        ? "Account created — redirecting…"
+        : "Account created — opening your student dashboard…",
+    );
+    router.push(next ?? "/student");
     router.refresh();
+  }
+
+  if (checkInboxFor) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-start gap-3 rounded-xl border border-brand-teal/25 bg-[#e8faf6] px-4 py-3 text-sm text-brand-navy">
+          <MailCheck className="mt-0.5 size-5 shrink-0 text-brand-teal" />
+          <div className="min-w-0">
+            <p className="font-semibold">Check your inbox</p>
+            <p className="mt-1">
+              We sent a verification link to{" "}
+              <strong className="break-all">{checkInboxFor}</strong>. Open it to
+              activate your account. The link expires in 24 hours.
+            </p>
+          </div>
+        </div>
+        <p className="text-center text-sm text-muted">
+          Already verified?{" "}
+          <Link
+            href={authPageHref("/login", searchParams)}
+            className="font-semibold text-brand-purple"
+          >
+            Sign in
+          </Link>
+        </p>
+      </div>
+    );
   }
 
   return (
@@ -94,6 +151,7 @@ export function RegisterForm() {
         <input
           type="text"
           required
+          autoComplete="name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Enter your full name"
@@ -107,6 +165,7 @@ export function RegisterForm() {
         <input
           type="email"
           required
+          autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="Enter your email"
@@ -121,6 +180,8 @@ export function RegisterForm() {
           type="password"
           required
           minLength={8}
+          maxLength={128}
+          autoComplete="new-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="At least 8 characters"
@@ -130,17 +191,15 @@ export function RegisterForm() {
       <Button submit className="w-full" loading={loading}>
         {loading ? "Creating account…" : "Create account"}
       </Button>
-      {error ? <p className="text-center text-sm text-red-500">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-center text-sm text-red-500">
+          {error}
+        </p>
+      ) : null}
       <p className="text-center text-sm text-muted">
         Already have an account?{" "}
         <Link
-          href={
-            roadmapId
-              ? `/login?roadmap=${encodeURIComponent(roadmapId)}${courseSlug ? `&slug=${encodeURIComponent(courseSlug)}` : ""}`
-              : enrollCourseId
-                ? `/login?enroll=${encodeURIComponent(enrollCourseId)}${courseSlug ? `&slug=${encodeURIComponent(courseSlug)}` : ""}`
-                : "/login"
-          }
+          href={authPageHref("/login", searchParams)}
           className="font-semibold text-brand-purple"
         >
           Sign in

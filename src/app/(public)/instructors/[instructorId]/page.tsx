@@ -1,21 +1,47 @@
 import Image from "next/image";
 import Link from "next/link";
 import { BookOpen, Users } from "lucide-react";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import { Button } from "@/components/ui/button";
 import { getInstructorProfile } from "@/lib/dashboard-data";
+import { pluralize } from "@/lib/format";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
+import { shareImageMetadata } from "@/lib/institute";
 import { formatCoursePrice } from "@/lib/pricing";
+
+/** Public instructor profile; shared by the page and its metadata. */
+const loadInstructor = cache(async (instructorId: string) => {
+  const ctx = await resolveTenantFromHeaders();
+  if (!ctx) return null;
+  return getInstructorProfile(instructorId, ctx.organizationId);
+});
 
 type Props = { params: Promise<{ instructorId: string }> };
 
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { instructorId } = await params;
+  const instructor = await loadInstructor(instructorId);
+  if (!instructor) return { title: "Instructor not found" };
+  const courseCount = instructor.courseTeaching.length;
+  return {
+    title: instructor.name,
+    description:
+      instructor.bio?.slice(0, 160) ||
+      `${instructor.name} teaches ${courseCount} course${courseCount === 1 ? "" : "s"}.`,
+    alternates: { canonical: `/instructors/${instructor.id}` },
+    ...(await shareImageMetadata(
+      instructor.image ? resolveMediaUrl(instructor.image) : null,
+      instructor.name,
+    )),
+  };
+}
+
 export default async function InstructorProfilePage({ params }: Props) {
   const { instructorId } = await params;
-  const ctx = await resolveTenantFromHeaders();
-  if (!ctx) notFound();
-  const instructor = await getInstructorProfile(instructorId, ctx.organizationId);
-
+  const instructor = await loadInstructor(instructorId);
   if (!instructor) notFound();
 
   const courses = instructor.courseTeaching;
@@ -59,7 +85,10 @@ export default async function InstructorProfilePage({ params }: Props) {
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Users className="size-4 text-brand-teal" />
-                {courses.reduce((s, c) => s + c._count.enrollments, 0)} students
+                {pluralize(
+                  courses.reduce((s, c) => s + c._count.enrollments, 0),
+                  "student",
+                )}
               </span>
             </div>
           </div>

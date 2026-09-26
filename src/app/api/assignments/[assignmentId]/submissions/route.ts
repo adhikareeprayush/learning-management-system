@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
-import { cleanString, jsonError, requireSession, requireTenantApi } from "@/lib/api";
-import { findManagedCourse } from "@/lib/course-access";
+import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import { boundedText, findManagedCourse, readJsonObject } from "@/lib/course-access";
+import { parseMediaUrl } from "@/lib/media-url";
 import { resolveLearnerMember } from "@/lib/membership";
 
 type Params = { params: Promise<{ assignmentId: string }> };
@@ -76,9 +77,14 @@ export async function POST(request: Request, { params }: Params) {
     where: { courseId_studentId: { courseId: assignment.courseId, studentId: session.user.id } },
   });
   if (!enrollment) return jsonError("You are not enrolled in this course", 403);
-  const body = await request.json().catch(() => ({}));
-  const content = cleanString(body.content, 50_000) || null;
-  const fileUrl = cleanString(body.fileUrl, 2_000) || null;
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+  const text = boundedText(body.content, "content", 50_000);
+  if (!text.ok) return jsonError(text.error, 400);
+  const file = parseMediaUrl(body.fileUrl, "file");
+  if (!file.ok) return jsonError(file.error, 400);
+  const content = text.value || null;
+  const fileUrl = file.url;
   if (!content && !fileUrl) return jsonError("content or fileUrl is required", 400);
 
   const key = { assignmentId_studentId: { assignmentId, studentId: session.user.id } };

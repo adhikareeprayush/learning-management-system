@@ -47,7 +47,9 @@ export const CERTIFICATE_LAYOUT = {
   signatureOffset: 206,
   sealRadius: 38,
   sealCenter: 490,
-  credentialBaseline: 550,
+  credentialBaseline: 546,
+  verifyBaseline: 558,
+  verifySize: 7,
   smallSize: 7.5,
 } as const;
 
@@ -96,7 +98,14 @@ export type CertificateContent = {
   signatory: { name: string; role: string };
   issuedOn: string;
   credentialId: string;
+  /** Public verification link, printed without the scheme. */
+  verifyUrl: string;
 };
+
+/** "lms.example.com/verify/abc" — what fits on the certificate footer. */
+export function verifyUrlLabel(url: string) {
+  return url.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+}
 
 export function formatCertificateDate(issuedAt: Date | string) {
   return new Date(issuedAt).toLocaleDateString("en-US", {
@@ -115,6 +124,7 @@ export function courseCertificateContent(input: {
   category?: string | null;
   credentialId: string;
   issuedAt: Date | string;
+  verifyUrl: string;
 }): CertificateContent {
   return {
     label: "Certificate of Completion",
@@ -126,6 +136,7 @@ export function courseCertificateContent(input: {
     signatory: { name: input.instructorName, role: "Course instructor" },
     issuedOn: formatCertificateDate(input.issuedAt),
     credentialId: input.credentialId,
+    verifyUrl: input.verifyUrl,
   };
 }
 
@@ -136,6 +147,7 @@ export function roadmapCertificateContent(input: {
   category?: string | null;
   credentialId: string;
   issuedAt: Date | string;
+  verifyUrl: string;
 }): CertificateContent {
   const courses = `${input.courseCount} course${input.courseCount === 1 ? "" : "s"}`;
   return {
@@ -148,5 +160,6 @@ export function roadmapCertificateContent(input: {
     signatory: { name: "Convolution LMS", role: "Issuing institute" },
     issuedOn: formatCertificateDate(input.issuedAt),
     credentialId: input.credentialId,
+    verifyUrl: input.verifyUrl,
   };
 }

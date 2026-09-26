@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BookOpen, Info, Search } from "lucide-react";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { FlashBanner } from "@/components/ui/flash-banner";
+import { pluralize } from "@/lib/format";
 
 type CourseStatus = "DRAFT" | "IN_REVIEW" | "PUBLISHED" | "ARCHIVED";
 
@@ -127,13 +128,13 @@ export default function AdminCoursesClient({
             >
               Approve
             </button>
-            <button
-              disabled={busyId === course.id}
-              onClick={() => setCourseStatus(course, "DRAFT")}
-              className="rounded-lg border border-black/8 px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+            {/* Returning needs a note for the instructor, collected on the review page. */}
+            <Link
+              href={`/admin/courses/${course.id}#moderation`}
+              className="rounded-lg border border-black/8 px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-50"
             >
               Return to draft
-            </button>
+            </Link>
           </>
         ) : null}
         {course.status === "PUBLISHED" ? (
@@ -224,7 +225,8 @@ export default function AdminCoursesClient({
               <div className="col-span-2">
                 <dt className="font-medium text-[#324361]">Content</dt>
                 <dd>
-                  {course.lessons} lessons · {course.students} students
+                  {pluralize(course.lessons, "lesson")} ·{" "}
+                  {pluralize(course.students, "student")}
                 </dd>
               </div>
             </dl>
@@ -271,8 +273,9 @@ export default function AdminCoursesClient({
                     {course.category || "—"}
                   </td>
                   <td className="px-5 py-4 text-muted">{course.price}</td>
-                  <td className="px-5 py-4 text-muted">
-                    {course.lessons} lessons · {course.students} students
+                  <td className="whitespace-nowrap px-5 py-4 text-muted">
+                    {pluralize(course.lessons, "lesson")} ·{" "}
+                    {pluralize(course.students, "student")}
                   </td>
                   <td className="px-5 py-4">
                     <span

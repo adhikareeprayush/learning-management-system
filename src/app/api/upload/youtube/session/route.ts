@@ -6,6 +6,7 @@ import {
   requireSession,
   requireTenantApi,
 } from "@/lib/api";
+import { readJsonObject } from "@/lib/course-access";
 import {
   createYouTubeResumableSession,
   isYouTubeConfigured,
@@ -32,8 +33,10 @@ export async function POST(request: Request) {
     );
   }
 
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+
   try {
-    const body = await request.json();
     const title = cleanString(body.title, 100) || "Lesson video";
     const description = cleanString(body.description, 5_000);
     const contentType =

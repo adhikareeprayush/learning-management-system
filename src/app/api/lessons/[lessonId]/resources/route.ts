@@ -1,13 +1,17 @@
 import { prisma } from "@/lib/db";
 import {
-  cleanString,
   isTeacher,
   jsonError,
   requireSession,
   requireTenantApi,
 } from "@/lib/api";
-import { canAccessLesson, findLessonForTeacher } from "@/lib/course-access";
-import { redactResourceForLearner } from "@/lib/lesson-resources";
+import {
+  boundedText,
+  canAccessLesson,
+  findLessonForTeacher,
+  readJsonObject,
+} from "@/lib/course-access";
+import { parseResourceUrl, redactResourceForLearner } from "@/lib/lesson-resources";
 
 type Params = { params: Promise<{ lessonId: string }> };
 
@@ -73,22 +77,27 @@ export async function POST(request: Request, { params }: Params) {
     return jsonError("Lesson not found", 404);
   }
 
-  const body = await request.json();
-  const type = cleanString(body.type, 20).toUpperCase();
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+  const type = typeof body.type === "string" ? body.type.trim().toUpperCase() : "";
   if (!RESOURCE_TYPES.has(type)) {
     return jsonError("type must be VIDEO, TEXT, EXERCISE, or QUIZ", 400);
   }
 
-  const title = cleanString(body.title, 200);
-  if (!title) return jsonError("title is required", 400);
+  const title = boundedText(body.title, "title", 200, { required: true });
+  if (!title.ok) return jsonError(title.error, 400);
+  const description = boundedText(body.description, "description", 50_000);
+  if (!description.ok) return jsonError(description.error, 400);
+  const url = parseResourceUrl(type, body.url);
+  if (!url.ok) return jsonError(url.error, 400);
 
   const resource = await prisma.lessonResource.create({
     data: {
       lessonId,
       type: type as "VIDEO" | "TEXT" | "EXERCISE" | "QUIZ",
-      title,
-      url: cleanString(body.url, 2_000),
-      description: cleanString(body.description, 50_000) || null,
+      title: title.value,
+      url: url.url ?? "",
+      description: description.value || null,
     },
   });
 

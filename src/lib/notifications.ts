@@ -33,7 +33,7 @@ async function studentNotifications(
         where: {
           userId,
           course: { organizationId },
-          status: { in: ["COMPLETED", "FAILED"] },
+          status: { in: ["COMPLETED", "FAILED", "REFUNDED"] },
           updatedAt: { gte: since },
         },
         orderBy: { updatedAt: "desc" },
@@ -124,6 +124,18 @@ async function studentNotifications(
           at,
         };
       }
+      if (payment.status === "REFUNDED") {
+        return {
+          id: `payment-${payment.id}-refunded`,
+          title: "Payment refunded",
+          body: payment.rejectionReason
+            ? `${payment.course.title}: ${payment.rejectionReason}`
+            : `Your payment for ${payment.course.title} was refunded.`,
+          href: `/courses/${payment.course.slug}`,
+          // A refund happens after approval; updatedAt is when it was recorded.
+          at: payment.updatedAt,
+        };
+      }
       return {
         id: `payment-${payment.id}-rejected`,
         title: "Payment rejected",
@@ -185,6 +197,7 @@ async function instructorNotifications(
         status: { not: "GRADED" },
         submittedAt: { gte: since },
         assignment: { course: ownCourse },
+        student: { deletedAt: null },
       },
       orderBy: { submittedAt: "desc" },
       take: PER_SOURCE,
@@ -201,7 +214,7 @@ async function instructorNotifications(
       },
     }),
     prisma.enrollment.findMany({
-      where: { enrolledAt: { gte: since }, course: ownCourse },
+      where: { enrolledAt: { gte: since }, course: ownCourse, student: { deletedAt: null } },
       orderBy: { enrolledAt: "desc" },
       take: PER_SOURCE,
       select: {
@@ -212,7 +225,7 @@ async function instructorNotifications(
       },
     }),
     prisma.review.findMany({
-      where: { createdAt: { gte: since }, course: ownCourse },
+      where: { createdAt: { gte: since }, course: ownCourse, student: { deletedAt: null } },
       orderBy: { createdAt: "desc" },
       take: PER_SOURCE,
       select: {
@@ -260,7 +273,7 @@ async function instructorNotifications(
 async function adminNotifications(organizationId: string): Promise<Draft[]> {
   const [payments, courses] = await Promise.all([
     prisma.payment.findMany({
-      where: { status: "PENDING", course: { organizationId } },
+      where: { status: "PENDING", course: { organizationId }, user: { deletedAt: null } },
       orderBy: { createdAt: "desc" },
       take: PER_SOURCE,
       select: {
@@ -299,7 +312,7 @@ async function adminNotifications(organizationId: string): Promise<Draft[]> {
         id: `course-review-${course.id}-${course.updatedAt.getTime()}`,
         title: "Course awaiting review",
         body: `${course.title} by ${course.instructor.name}`,
-        href: `/admin/courses?q=${encodeURIComponent(course.title)}`,
+        href: `/admin/courses/${course.id}`,
         at: course.updatedAt,
       }),
     ),

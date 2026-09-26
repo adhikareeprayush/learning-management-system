@@ -3,16 +3,23 @@ import {
   isImageKitConfigured,
   isLocalUploadEnabled,
   isYouTubeConfigured,
+  maxUploadBytes,
   mediaError,
   uploadLessonVideo,
   uploadMediaFile,
 } from "@/lib/media";
 import { isOrgAdmin } from "@/lib/tenant";
+import {
+  UPLOAD_PURPOSES,
+  detectFileType,
+  isAllowedForPurpose,
+  isUploadPurpose,
+  unsupportedTypeMessage,
+  type UploadPurpose,
+} from "@/lib/upload-client";
 
 export const runtime = "nodejs";
 
-const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"]);
-const DOCUMENT_TYPES = new Set(["application/pdf", "text/plain", "application/zip"]);
 const VIDEO_TYPES = new Set([
   "video/mp4",
   "video/webm",
@@ -21,26 +28,15 @@ const VIDEO_TYPES = new Set([
   "video/x-matroska",
 ]);
 
+// Multipart boundaries and the other form fields on top of the file itself.
+const FORM_OVERHEAD_BYTES = 64 * 1024;
+
 function isVideoFile(file: File) {
   return file.type.startsWith("video/") || VIDEO_TYPES.has(file.type);
 }
 
-type UploadAccess = "any" | "teacher" | "admin";
-
-/** What the file is for decides its folder, who may upload it, and which types are allowed. */
-const UPLOAD_PURPOSES = {
-  avatar: { folder: "avatars", access: "any", documents: false, video: false },
-  "course-thumbnail": { folder: "course-thumbnails", access: "teacher", documents: false, video: false },
-  "lesson-resource": { folder: "lesson-resources", access: "teacher", documents: true, video: true },
-  "payment-screenshot": { folder: "payment-screenshots", access: "any", documents: false, video: false },
-  "payment-qr": { folder: "payment-assets", access: "admin", documents: false, video: false },
-  submission: { folder: "submissions", access: "any", documents: true, video: false },
-} satisfies Record<string, { folder: string; access: UploadAccess; documents: boolean; video: boolean }>;
-
-type UploadPurpose = keyof typeof UPLOAD_PURPOSES;
-
-function isUploadPurpose(value: string): value is UploadPurpose {
-  return Object.hasOwn(UPLOAD_PURPOSES, value);
+function youtubeMaxBytes() {
+  return Number(process.env.YOUTUBE_MAX_UPLOAD_MB || 500) * 1024 * 1024;
 }
 
 export async function GET() {
@@ -65,7 +61,22 @@ export async function POST(request: Request) {
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
 
-  const form = await request.formData();
+  // Refuse oversized bodies before buffering them. Proxied video uploads (never on Vercel) get the larger YouTube limit.
+  const largestAllowed = Math.max(
+    maxUploadBytes(),
+    process.env.VERCEL === "1" || !isTeacher(session, tenant.member) ? 0 : youtubeMaxBytes(),
+  );
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > largestAllowed + FORM_OVERHEAD_BYTES) {
+    return jsonError("File exceeds the configured upload limit", 413);
+  }
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return jsonError("Send the file as multipart/form-data", 400);
+  }
   const file = form.get("file");
   if (!(file instanceof File) || file.size === 0) return jsonError("file is required", 400);
   const requestedProvider = cleanString(form.get("provider"), 20);
@@ -84,8 +95,7 @@ export async function POST(request: Request) {
       return jsonError("Only instructors can upload lesson videos", 403);
     }
     if (!isVideo) return jsonError("Video uploads must be video files", 400);
-    const max = Number(process.env.YOUTUBE_MAX_UPLOAD_MB || 500) * 1024 * 1024;
-    if (file.size > max) return jsonError("Video exceeds the configured upload limit", 413);
+    if (file.size > youtubeMaxBytes()) return jsonError("Video exceeds the configured upload limit", 413);
     try {
       const title = cleanString(form.get("title"), 100) || file.name;
       const description = cleanString(form.get("description"), 5_000);
@@ -100,7 +110,6 @@ export async function POST(request: Request) {
 
   const isAdmin = session.user.role === "ADMIN" || isOrgAdmin(tenant.member);
   const canTeach = isAdmin || isTeacher(session, tenant.member);
-  if (isVideo && !canTeach) return jsonError("Only instructors can upload videos", 403);
 
   // Callers that don't say what the upload is for get the historical folder for their role.
   const requestedPurpose = cleanString(form.get("purpose"), 40);
@@ -122,19 +131,19 @@ export async function POST(request: Request) {
   ) {
     return jsonError("You can't upload files for this purpose", 403);
   }
-  const allowed =
-    IMAGE_TYPES.has(file.type) ||
-    (rule.documents && DOCUMENT_TYPES.has(file.type)) ||
-    (rule.video && isVideo);
-  if (!allowed) return jsonError("Unsupported file type", 415);
 
-  const max = Number(process.env.IMAGEKIT_MAX_UPLOAD_MB || 25) * 1024 * 1024;
-  if (file.size > max) return jsonError("File exceeds the configured upload limit", 413);
+  if (file.size > maxUploadBytes()) return jsonError("File exceeds the configured upload limit", 413);
+
+  // The declared type and file name come from the client; only the bytes decide.
+  const type = await detectFileType(file);
+  if (!type || !isAllowedForPurpose(type, purpose)) {
+    return jsonError(unsupportedTypeMessage(purpose), 415);
+  }
 
   const folder = `/lms/${tenant.organizationId}/${rule.folder}`;
 
   try {
-    const result = await uploadMediaFile(file, folder);
+    const result = await uploadMediaFile(file, folder, type);
     return Response.json({ upload: result }, { status: 201 });
   } catch (error) {
     return jsonError(mediaError(error), 502);

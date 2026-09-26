@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
+  Award,
   CheckCircle2,
   ClipboardList,
   Download,
@@ -23,6 +25,10 @@ export type StudentLessonResource = {
   title: string;
   url: string;
   description: string | null;
+  /** Quizzes that must be passed before the course certificate is issued. */
+  requiredForCertificate?: boolean;
+  /** Passed in any attempt (not just the latest). */
+  passed?: boolean;
   latestAttempt?: {
     score: number;
     passed: boolean;
@@ -42,12 +48,17 @@ function QuizTaker({
   title,
   description,
   latestAttempt,
+  requiredForCertificate = false,
+  passed = false,
 }: {
   resourceId: string;
   title: string;
   description: string | null;
   latestAttempt?: StudentLessonResource["latestAttempt"];
+  requiredForCertificate?: boolean;
+  passed?: boolean;
 }) {
+  const router = useRouter();
   const payload = parsePublicQuizPayload(description);
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -79,6 +90,8 @@ function QuizTaker({
         return;
       }
       setResult(data.attempt);
+      // Refresh certificate progress (and issue it if this was the last quiz).
+      router.refresh();
     } catch {
       setFlash("Something went wrong. Try again.");
     } finally {
@@ -89,6 +102,18 @@ function QuizTaker({
   return (
     <div>
       <FlashBanner message={flash} onDismiss={() => setFlash(null)} />
+      {requiredForCertificate ? (
+        <p
+          className={`mb-3 inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-semibold ${
+            passed ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"
+          }`}
+        >
+          {passed ? <CheckCircle2 className="size-3.5" /> : <Award className="size-3.5" />}
+          {passed
+            ? "Passed — counts toward your certificate"
+            : "Pass this quiz to earn your course certificate"}
+        </p>
+      ) : null}
       {latestAttempt && !result ? (
         <p className="mb-3 text-xs text-muted">
           Last attempt: {latestAttempt.score}%{" "}
@@ -222,6 +247,8 @@ export function LessonResourcesPanel({
             title={active.title}
             description={active.description}
             latestAttempt={active.latestAttempt}
+            requiredForCertificate={active.requiredForCertificate}
+            passed={active.passed}
           />
         ) : active.type === "EXERCISE" ? (
           <div className="space-y-4">

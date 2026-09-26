@@ -4,6 +4,7 @@ import {
   certificatePdfFilename,
   generateCertificatePdf,
 } from "@/lib/certificate-pdf";
+import { certificateVerifyUrl } from "@/lib/certificates";
 
 type Params = { params: Promise<{ certificateId: string }> };
 
@@ -38,16 +39,20 @@ export async function GET(request: Request, { params }: Params) {
 
   if (!certificate) return jsonError("Certificate not found", 404);
 
+  // Issued snapshot first; live values only for rows that predate snapshots.
+  const courseTitle = certificate.courseTitle ?? certificate.course.title;
   const pdfBytes = await generateCertificatePdf({
-    studentName: certificate.student.name,
-    courseTitle: certificate.course.title,
-    instructorName: certificate.course.instructor.name,
+    studentName: certificate.holderName ?? certificate.student.name,
+    courseTitle,
+    instructorName:
+      certificate.instructorName ?? certificate.course.instructor.name,
     category: certificate.course.category,
     credentialId: certificate.credentialId,
     issuedAt: certificate.issuedAt,
+    verifyUrl: certificateVerifyUrl(certificate.credentialId),
   });
 
-  const filename = certificatePdfFilename(certificate.course.title);
+  const filename = certificatePdfFilename(courseTitle);
 
   const disposition =
     new URL(request.url).searchParams.get("inline") === "1"

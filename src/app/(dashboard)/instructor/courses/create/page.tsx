@@ -1,5 +1,8 @@
+import type { Metadata } from "next";
 import { CourseForm } from "@/components/course/course-form";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
+
+export const metadata: Metadata = { title: "Create course" };
 
 export default function CreateCoursePage() {
   return (

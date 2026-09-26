@@ -3,8 +3,10 @@ import Link from "next/link";
 import {
   Award,
   BookOpen,
+  ClipboardCheck,
   Clock,
-  Download,
+  FileText,
+  ListChecks,
   MessageCircle,
   PlayCircle,
   Star,
@@ -12,30 +14,20 @@ import {
 } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import { Button } from "@/components/ui/button";
 import { CourseReviews } from "@/components/course/course-reviews";
 import { EnrollButton } from "@/components/course/enroll-button";
 import { getServerSession } from "@/lib/auth";
+import { isRequiredQuiz } from "@/lib/certificates";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 import { prisma } from "@/lib/db";
+import { formatDuration, formatLevel } from "@/lib/format";
+import { shareImageMetadata } from "@/lib/institute";
 import { getLatestPaymentForCourse } from "@/lib/payments";
 import { courseRequiresPayment, formatCoursePrice } from "@/lib/pricing";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { LessonPreviewRow } from "./lesson-preview";
-
-function formatDuration(minutes: number) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h <= 0) return `${m}m`;
-  return `${h}h ${m.toString().padStart(2, "0")}m`;
-}
-
-function formatLevel(level: string) {
-  if (level === "BEGINNER") return "Beginner";
-  if (level === "INTERMEDIATE") return "Intermediate";
-  if (level === "ADVANCED") return "Advanced";
-  return level;
-}
 
 function contentParagraphs(content: string | null) {
   return (content ?? "")
@@ -44,34 +36,15 @@ function contentParagraphs(content: string | null) {
     .filter(Boolean);
 }
 
-type Props = { params: Promise<{ courseId: string }> };
-
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const { courseId } = await params;
-  const ctx = await resolveTenantFromHeaders();
-  if (!ctx) return { title: "Course" };
-  const course = await prisma.course.findFirst({
-    where: {
-      organizationId: ctx.organizationId,
-      status: "PUBLISHED",
-      OR: [{ id: courseId }, { slug: courseId }],
-    },
-    select: { title: true, description: true },
-  });
-  if (!course) return { title: "Course not found" };
-  return {
-    title: course.title,
-    description: course.description?.slice(0, 160) || undefined,
-  };
+function plural(count: number, noun: string) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-export default async function CourseDetailPage({ params }: Props) {
-  const { courseId } = await params;
-  const session = await getServerSession();
+/** Published course by id or slug; shared by the page and its metadata. */
+const loadPublishedCourse = cache(async (courseId: string) => {
   const ctx = await resolveTenantFromHeaders();
-  if (!ctx) notFound();
-
-  const course = await prisma.course.findFirst({
+  if (!ctx) return null;
+  return prisma.course.findFirst({
     where: {
       organizationId: ctx.organizationId,
       status: "PUBLISHED",
@@ -90,14 +63,42 @@ export default async function CourseDetailPage({ params }: Props) {
           videoUrl: true,
           summary: true,
           content: true,
+          resources: { select: { type: true, description: true } },
         },
       },
-      _count: { select: { enrollments: true } },
+      _count: { select: { enrollments: true, assignments: true } },
       reviews: { select: { rating: true } },
     },
   });
+});
 
-  if (!course) notFound();
+type Props = { params: Promise<{ courseId: string }> };
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { courseId } = await params;
+  const course = await loadPublishedCourse(courseId);
+  if (!course) return { title: "Course not found" };
+  return {
+    title: course.title,
+    description:
+      course.description?.slice(0, 160) ||
+      `${formatLevel(course.level)} course taught by ${course.instructor.name}.`,
+    alternates: { canonical: `/courses/${course.slug}` },
+    ...(await shareImageMetadata(
+      course.thumbnail ? resolveMediaUrl(course.thumbnail) : null,
+      course.title,
+    )),
+  };
+}
+
+export default async function CourseDetailPage({ params }: Props) {
+  const { courseId } = await params;
+  const [session, ctx, course] = await Promise.all([
+    getServerSession(),
+    resolveTenantFromHeaders(),
+    loadPublishedCourse(courseId),
+  ]);
+  if (!ctx || !course) notFound();
 
   const related = await prisma.course.findMany({
     where: {
@@ -141,6 +142,14 @@ export default async function CourseDetailPage({ params }: Props) {
     };
   });
   const previewCount = lessons.filter((lesson) => lesson.preview).length;
+
+  const resources = course.lessons.flatMap((lesson) => lesson.resources);
+  const quizCount = resources.filter(isRequiredQuiz).length;
+  const materialCount = resources.filter((resource) => resource.type !== "QUIZ").length;
+  const assignmentCount = course._count.assignments;
+  const totalMinutes =
+    course.duration ||
+    course.lessons.reduce((sum, lesson) => sum + lesson.duration, 0);
 
   const enrollment =
     session
@@ -206,11 +215,12 @@ export default async function CourseDetailPage({ params }: Props) {
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Users className="size-4 text-brand-purple" />
-                {course._count.enrollments.toLocaleString()} students
+                {course._count.enrollments.toLocaleString()} student
+                {course._count.enrollments === 1 ? "" : "s"}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Clock className="size-4 text-brand-teal" />
-                {formatDuration(course.duration)}
+                {formatDuration(totalMinutes)}
               </span>
             </div>
             <div className="mt-8 flex flex-wrap items-start gap-3">
@@ -218,6 +228,7 @@ export default async function CourseDetailPage({ params }: Props) {
                 courseId={course.id}
                 slug={course.slug}
                 courseTitle={course.title}
+                viewerRole={session?.user.role ?? null}
                 priceLabel={price}
                 requiresPayment={requiresPayment}
                 paymentStatus={paymentStatus}
@@ -252,15 +263,21 @@ export default async function CourseDetailPage({ params }: Props) {
             <div className="grid grid-cols-3 divide-x divide-white/10 text-center text-white">
               <div className="px-3 py-4">
                 <p className="text-lg font-semibold">{price}</p>
-                <p className="text-xs text-white/60">One-time</p>
+                <p className="text-xs text-white/60">
+                  {requiresPayment ? "One-time payment" : "No payment needed"}
+                </p>
               </div>
               <div className="px-3 py-4">
                 <p className="text-lg font-semibold">{lessons.length}</p>
-                <p className="text-xs text-white/60">Lessons</p>
+                <p className="text-xs text-white/60">
+                  {lessons.length === 1 ? "Lesson" : "Lessons"}
+                </p>
               </div>
               <div className="px-3 py-4">
-                <p className="text-lg font-semibold">Full</p>
-                <p className="text-xs text-white/60">Access</p>
+                <p className="text-lg font-semibold">
+                  {formatDuration(totalMinutes)}
+                </p>
+                <p className="text-xs text-white/60">Total length</p>
               </div>
             </div>
           </div>
@@ -350,20 +367,45 @@ export default async function CourseDetailPage({ params }: Props) {
             </h3>
             <ul className="mt-4 space-y-3 text-sm text-muted">
               <li className="flex items-start gap-2">
-                <Award className="mt-0.5 size-4 text-brand-teal" />
-                Certificate of completion
+                <Award className="mt-0.5 size-4 shrink-0 text-brand-teal" />
+                {quizCount > 0
+                  ? "A verifiable certificate once you complete every lesson and pass every quiz"
+                  : "A verifiable certificate once you complete every lesson"}
+              </li>
+              {previewCount > 0 ? (
+                <li className="flex items-start gap-2">
+                  <PlayCircle className="mt-0.5 size-4 shrink-0 text-brand-purple" />
+                  {plural(previewCount, "free preview lesson")} to try first
+                </li>
+              ) : null}
+              {materialCount > 0 ? (
+                <li className="flex items-start gap-2">
+                  <FileText className="mt-0.5 size-4 shrink-0 text-brand-purple" />
+                  {plural(materialCount, "lesson resource")} — readings,
+                  exercises, and extra videos
+                </li>
+              ) : null}
+              {quizCount > 0 ? (
+                <li className="flex items-start gap-2">
+                  <ListChecks className="mt-0.5 size-4 shrink-0 text-brand-teal" />
+                  {quizCount === 1 ? "1 quiz" : `${quizCount} quizzes`} to check
+                  your understanding
+                </li>
+              ) : null}
+              {assignmentCount > 0 ? (
+                <li className="flex items-start gap-2">
+                  <ClipboardCheck className="mt-0.5 size-4 shrink-0 text-brand-navy" />
+                  {plural(assignmentCount, "assignment")} graded by the
+                  instructor
+                </li>
+              ) : null}
+              <li className="flex items-start gap-2">
+                <MessageCircle className="mt-0.5 size-4 shrink-0 text-brand-navy" />
+                Rate and review the course when you finish
               </li>
               <li className="flex items-start gap-2">
-                <Download className="mt-0.5 size-4 text-brand-purple" />
-                Project files & templates
-              </li>
-              <li className="flex items-start gap-2">
-                <MessageCircle className="mt-0.5 size-4 text-brand-navy" />
-                Course reviews when you finish
-              </li>
-              <li className="flex items-start gap-2">
-                <Clock className="mt-0.5 size-4 text-brand-teal" />
-                Access while enrolled
+                <Clock className="mt-0.5 size-4 shrink-0 text-brand-teal" />
+                Self-paced — learn on your own schedule
               </li>
             </ul>
             {course.outcomes.length > 0 ? (

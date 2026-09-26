@@ -9,6 +9,7 @@ import {
   LineChart,
   Mail,
   PlusCircle,
+  Receipt,
   Route,
   Settings,
   Users,
@@ -52,6 +53,7 @@ export const studentNav: DashboardNavGroup[] = [
     title: "Account",
     items: [
       { href: "/student/profile", label: "Profile", icon: UserRound },
+      { href: "/student/payments", label: "Payments", icon: Receipt },
       { href: "/student/settings", label: "Settings", icon: Settings },
       { href: "/courses", label: "Browse catalog", icon: BookOpen },
       { href: "/roadmaps", label: "Browse roadmaps", icon: Route },

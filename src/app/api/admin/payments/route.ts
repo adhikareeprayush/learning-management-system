@@ -1,4 +1,4 @@
-import type { PaymentStatus } from "@prisma/client";
+import type { PaymentStatus, Prisma } from "@prisma/client";
 import { cleanString, jsonError, optionalString, requireOrgAdminApi } from "@/lib/api";
 import {
   ADMIN_PAYMENTS_PAGE_SIZE,
@@ -6,6 +6,7 @@ import {
   listAdminPayments,
 } from "@/lib/dashboard-data";
 import { prisma } from "@/lib/db";
+import { notifyPaymentReviewed } from "@/lib/email-notifications";
 import { mapLegacyRoleToOrgRole } from "@/lib/tenant";
 
 function parseStatus(value: string | null): PaymentStatus | "REVIEWED" | undefined {
@@ -13,6 +14,7 @@ function parseStatus(value: string | null): PaymentStatus | "REVIEWED" | undefin
     value === "PENDING" ||
     value === "COMPLETED" ||
     value === "FAILED" ||
+    value === "REFUNDED" ||
     value === "REVIEWED"
   ) {
     return value;
@@ -53,6 +55,17 @@ function alreadyReviewed() {
   );
 }
 
+function notRefundable() {
+  return Response.json(
+    { error: "Only approved payments can be refunded.", code: "NOT_REFUNDABLE" },
+    { status: 409 },
+  );
+}
+
+function metadataObject(value: Prisma.JsonValue | null): Prisma.JsonObject {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
 export async function PATCH(request: Request) {
   const auth = await requireOrgAdminApi();
   if (auth instanceof Response) return auth;
@@ -64,8 +77,8 @@ export async function PATCH(request: Request) {
   const action = cleanString(body.action, 20);
 
   if (!paymentId) return jsonError("paymentId is required", 400);
-  if (action !== "approve" && action !== "reject") {
-    return jsonError("action must be approve or reject", 400);
+  if (action !== "approve" && action !== "reject" && action !== "refund") {
+    return jsonError("action must be approve, reject or refund", 400);
   }
 
   try {
@@ -76,12 +89,58 @@ export async function PATCH(request: Request) {
         status: true,
         userId: true,
         courseId: true,
+        metadata: true,
         course: { select: { slug: true, status: true } },
-        user: { select: { role: true } },
+        user: { select: { role: true, deletedAt: true } },
       },
     });
 
     if (!payment) return jsonError("Payment not found", 404);
+
+    if (action === "refund") {
+      if (payment.status !== "COMPLETED") return notRefundable();
+      const refundedAt = new Date();
+      try {
+        await prisma.$transaction(async (tx) => {
+          // Conditional on still COMPLETED so a double submit refunds once.
+          const { count } = await tx.payment.updateMany({
+            where: { id: payment.id, status: "COMPLETED" },
+            data: {
+              status: "REFUNDED",
+              rejectionReason: optionalString(body.reason, 500),
+              // reviewedBy/reviewedAt stay with the approval; the refund is recorded here.
+              metadata: {
+                ...metadataObject(payment.metadata),
+                refund: {
+                  at: refundedAt.toISOString(),
+                  byId: auth.session.user.id,
+                  byName: auth.session.user.name,
+                },
+              },
+            },
+          });
+          if (count === 0) throw new AlreadyReviewedError();
+
+          // A second approved payment for the same course still pays for access.
+          const stillPaid = await tx.payment.count({
+            where: { userId: payment.userId, courseId: payment.courseId, status: "COMPLETED" },
+          });
+          if (stillPaid === 0) {
+            await tx.enrollment.deleteMany({
+              where: { courseId: payment.courseId, studentId: payment.userId },
+            });
+          }
+        });
+      } catch (error) {
+        if (error instanceof AlreadyReviewedError) return notRefundable();
+        throw error;
+      }
+
+      notifyPaymentReviewed(payment.id);
+      const updated = await getAdminPayment(auth.organizationId, payment.id);
+      return Response.json({ payment: updated, enrolled: false, courseSlug: payment.course.slug });
+    }
+
     if (payment.status !== "PENDING") return alreadyReviewed();
 
     const reviewedAt = new Date();
@@ -100,6 +159,9 @@ export async function PATCH(request: Request) {
       });
       if (count === 0) return alreadyReviewed();
     } else {
+      if (payment.user.deletedAt) {
+        return jsonError("This student's account was deleted, so they can't be enrolled. Reject the payment instead.", 409);
+      }
       if (payment.course.status !== "PUBLISHED") {
         return jsonError(
           "This course is not published, so the student can't be enrolled. Publish it again or reject the payment.",
@@ -152,6 +214,7 @@ export async function PATCH(request: Request) {
       }
     }
 
+    notifyPaymentReviewed(payment.id);
     const updated = await getAdminPayment(auth.organizationId, payment.id);
     return Response.json({
       payment: updated,

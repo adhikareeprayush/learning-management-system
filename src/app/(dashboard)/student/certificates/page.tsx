@@ -1,12 +1,19 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { CertificatesWorkspace } from "@/components/student/certificates-workspace";
 import { getServerSession } from "@/lib/auth";
-import { syncCertificatesForStudent } from "@/lib/certificates";
+import {
+  certificateVerifyUrl,
+  syncCertificatesForStudent,
+} from "@/lib/certificates";
 import { prisma } from "@/lib/db";
+import { loginRedirectPath } from "@/lib/page-guards";
+
+export const metadata: Metadata = { title: "Certificates" };
 
 export default async function StudentCertificatesPage() {
   const session = await getServerSession();
-  if (!session) redirect("/login");
+  if (!session) redirect(await loginRedirectPath());
 
   await syncCertificatesForStudent(session.user.id);
 
@@ -44,34 +51,40 @@ export default async function StudentCertificatesPage() {
     }),
   ]);
 
+  // Issued snapshots win so a later rename never changes an issued credential;
+  // live values only fill rows that predate the snapshot columns.
   const certificates = [
     ...courseCerts.map((c) => ({
       kind: "course" as const,
       id: c.id,
       credentialId: c.credentialId,
       issuedAt: c.issuedAt.toISOString(),
-      course: c.course,
+      holderName: c.holderName ?? session.user.name,
+      verifyUrl: certificateVerifyUrl(c.credentialId),
+      course: {
+        title: c.courseTitle ?? c.course.title,
+        slug: c.course.slug,
+        category: c.course.category,
+        instructorName: c.instructorName ?? c.course.instructor.name,
+      },
     })),
     ...roadmapCerts.map((c) => ({
       kind: "roadmap" as const,
       id: c.id,
       credentialId: c.credentialId,
       issuedAt: c.issuedAt.toISOString(),
+      holderName: c.holderName ?? session.user.name,
+      verifyUrl: certificateVerifyUrl(c.credentialId),
       roadmap: {
-        title: c.roadmap.title,
+        title: c.roadmapTitle ?? c.roadmap.title,
         slug: c.roadmap.slug,
         category: c.roadmap.category,
-        courseCount: c.roadmap.courses.length,
+        courseCount: c.courseCount ?? c.roadmap.courses.length,
       },
     })),
   ].sort(
     (a, b) => new Date(b.issuedAt).getTime() - new Date(a.issuedAt).getTime(),
   );
 
-  return (
-    <CertificatesWorkspace
-      studentName={session.user.name}
-      certificates={certificates}
-    />
-  );
+  return <CertificatesWorkspace certificates={certificates} />;
 }

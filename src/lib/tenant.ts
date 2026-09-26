@@ -1,6 +1,9 @@
 import type { OrgRole, Organization, OrganizationMember } from "@prisma/client";
+import { connection } from "next/server";
+import { cache } from "react";
 import { prisma } from "@/lib/db";
 import { getServerSession } from "@/lib/auth";
+import { DEFAULT_ORG_SLUG, getDefaultOrganization } from "@/lib/default-org";
 
 export type TenantContext = {
   organization: Organization;
@@ -8,29 +11,12 @@ export type TenantContext = {
   member: OrganizationMember | null;
 };
 
-const DEFAULT_ORG_SLUG =
-  process.env.DEFAULT_ORG_SLUG?.trim().toLowerCase() || "convolution-labs";
+export { DEFAULT_ORG_SLUG, getDefaultOrganization };
 
-export async function getDefaultOrganization() {
-  try {
-    const bySlug = await prisma.organization.findUnique({
-      where: { slug: DEFAULT_ORG_SLUG },
-    });
-    if (bySlug) return bySlug;
-
-    return await prisma.organization.findFirst({
-      orderBy: { createdAt: "asc" },
-    });
-  } catch (error) {
-    console.error(
-      "[tenant] database unreachable — check DATABASE_URL (local Docker on :5435, or Supabase pooler).",
-      error instanceof Error ? error.message : error,
-    );
-    return null;
-  }
-}
-
-export async function resolveTenantFromHeaders(): Promise<TenantContext | null> {
+async function loadTenant(): Promise<TenantContext | null> {
+  // Tenant context is per request (it includes the viewer's membership); without
+  // this, prerendering would hit the database at build time before headers() opts out.
+  await connection();
   const organization = await getDefaultOrganization();
   if (!organization) return null;
 
@@ -53,6 +39,9 @@ export async function resolveTenantFromHeaders(): Promise<TenantContext | null> 
     member,
   };
 }
+
+/** Memoized per request: layouts, pages and guards all ask for it. */
+export const resolveTenantFromHeaders = cache(loadTenant);
 
 export async function requireTenantContext() {
   const ctx = await resolveTenantFromHeaders();

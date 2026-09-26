@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
-import { cleanString, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
-import { findManagedCourse } from "@/lib/course-access";
+import { isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import { boundedText, findManagedCourse, readJsonObject } from "@/lib/course-access";
 import { isOrgAdmin } from "@/lib/tenant";
 
 export async function GET(request: Request) {
@@ -48,10 +48,14 @@ export async function POST(request: Request) {
   if (!session) return jsonError("Unauthorized", 401);
   if (!isTeacher(session, tenant.member)) return jsonError("Forbidden", 403);
 
-  const body = await request.json();
-  const courseId = cleanString(body.courseId, 100);
-  const title = cleanString(body.title, 200);
-  if (!courseId || !title) return jsonError("courseId and title are required", 400);
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+  const courseId = typeof body.courseId === "string" ? body.courseId.trim().slice(0, 100) : "";
+  if (!courseId) return jsonError("courseId is required", 400);
+  const title = boundedText(body.title, "title", 200, { required: true });
+  if (!title.ok) return jsonError(title.error, 400);
+  const description = boundedText(body.description, "description", 20_000);
+  if (!description.ok) return jsonError(description.error, 400);
   const course = await findManagedCourse(
     courseId,
     tenant.organizationId,
@@ -59,10 +63,10 @@ export async function POST(request: Request) {
     tenant.member,
   );
   if (!course) return jsonError("Course not found", 404);
-  const dueDate = body.dueDate ? new Date(body.dueDate) : null;
+  const dueDate = typeof body.dueDate === "string" && body.dueDate ? new Date(body.dueDate) : null;
   if (dueDate && Number.isNaN(dueDate.getTime())) return jsonError("Invalid dueDate", 400);
   const assignment = await prisma.assignment.create({
-    data: { courseId: course.id, title, description: cleanString(body.description, 20_000) || null, dueDate },
+    data: { courseId: course.id, title: title.value, description: description.value || null, dueDate },
   });
   return Response.json({ assignment }, { status: 201 });
 }

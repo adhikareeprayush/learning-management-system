@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 type LogoProps = {
@@ -5,33 +6,71 @@ type LogoProps = {
   markClassName?: string;
   inverted?: boolean;
   markOnly?: boolean;
+  /** Institute name; the last word takes the accent colour. */
+  name?: string;
+  /** Institute logo, shown in place of the default mark. */
+  logoUrl?: string | null;
+  /** Size / max-width classes for the name text. */
+  textClassName?: string;
 };
+
+const DEFAULT_NAME = "Convolution LMS";
+
+function splitName(name: string) {
+  const trimmed = name.trim() || DEFAULT_NAME;
+  const index = trimmed.lastIndexOf(" ");
+  return index > 0
+    ? { lead: trimmed.slice(0, index), accent: trimmed.slice(index) }
+    : { lead: trimmed, accent: "" };
+}
 
 export function Logo({
   className = "",
   markClassName = "size-10",
   inverted = false,
   markOnly = false,
+  name = DEFAULT_NAME,
+  logoUrl = null,
+  textClassName = "max-w-[55vw] text-lg sm:max-w-xs sm:text-[22px]",
 }: LogoProps) {
   const navy = inverted ? "#ffffff" : "#04016C";
   const teal = inverted ? "#4be5ca" : "#2AAA94";
+  const { lead, accent } = splitName(name);
 
   return (
-    <Link href="/" className={`inline-flex items-center gap-2.5 ${className}`}>
-      <LogoMark className={markClassName} navy={navy} teal={teal} />
+    <Link
+      href="/"
+      className={`inline-flex min-w-0 max-w-full items-center gap-2.5 ${className}`}
+    >
+      {logoUrl ? (
+        // Unoptimized: the logo may sit on a custom ImageKit domain that the
+        // optimizer's remotePatterns don't list.
+        <Image
+          src={logoUrl}
+          alt=""
+          width={40}
+          height={40}
+          unoptimized
+          className={`shrink-0 object-contain ${markClassName}`}
+        />
+      ) : (
+        <LogoMark className={`shrink-0 ${markClassName}`} navy={navy} teal={teal} />
+      )}
       {markOnly ? (
-        <span className="sr-only">Convolution LMS</span>
+        <span className="sr-only">{name}</span>
       ) : (
         <span
-          className={`font-brand text-lg font-semibold leading-none tracking-tight sm:text-[22px] ${
+          title={name}
+          className={`min-w-0 truncate font-brand font-semibold leading-none tracking-tight ${textClassName} ${
             inverted ? "text-white" : "text-brand-navy"
           }`}
         >
-          Convolution
-          <span className={inverted ? "text-brand-mint" : "text-brand-teal"}>
-            {" "}
-            LMS
-          </span>
+          {lead}
+          {accent ? (
+            <span className={inverted ? "text-brand-mint" : "text-brand-teal"}>
+              {accent}
+            </span>
+          ) : null}
         </span>
       )}
     </Link>

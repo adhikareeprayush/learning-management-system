@@ -77,26 +77,33 @@ export type ProfileStats = {
 };
 
 export async function getStudentProfileStats(userId: string) {
-  const [enrollments, certificates, lessonsCompleted, assignmentsDue, submissions] =
-    await Promise.all([
-      prisma.enrollment.findMany({
-        where: { studentId: userId },
-        select: { progress: true },
-      }),
-      prisma.certificate.count({ where: { studentId: userId } }),
-      prisma.lessonProgress.count({
-        where: { studentId: userId, completed: true },
-      }),
-      prisma.assignment.count({
-        where: {
-          course: { enrollments: { some: { studentId: userId } } },
-          dueDate: { gte: new Date() },
-        },
-      }),
-      prisma.submission.count({
-        where: { studentId: userId, status: { not: "PENDING" } },
-      }),
-    ]);
+  const [
+    enrollments,
+    courseCertificates,
+    pathCertificates,
+    lessonsCompleted,
+    assignmentsDue,
+    submissions,
+  ] = await Promise.all([
+    prisma.enrollment.findMany({
+      where: { studentId: userId },
+      select: { progress: true },
+    }),
+    prisma.certificate.count({ where: { studentId: userId } }),
+    prisma.roadmapCertificate.count({ where: { studentId: userId } }),
+    prisma.lessonProgress.count({
+      where: { studentId: userId, completed: true },
+    }),
+    prisma.assignment.count({
+      where: {
+        course: { enrollments: { some: { studentId: userId } } },
+        dueDate: { gte: new Date() },
+      },
+    }),
+    prisma.submission.count({
+      where: { studentId: userId, status: { not: "PENDING" } },
+    }),
+  ]);
 
   const inProgress = enrollments.filter((e) => e.progress > 0 && e.progress < 100).length;
   const completed = enrollments.filter((e) => e.progress >= 100).length;
@@ -105,7 +112,7 @@ export async function getStudentProfileStats(userId: string) {
     { label: "Enrolled", value: String(enrollments.length) },
     { label: "In progress", value: String(inProgress) },
     { label: "Completed", value: String(completed) },
-    { label: "Certificates", value: String(certificates) },
+    { label: "Certificates", value: String(courseCertificates + pathCertificates) },
     { label: "Lessons done", value: String(lessonsCompleted) },
     { label: "Submissions", value: String(submissions) },
   ];

@@ -1,3 +1,5 @@
+import { formatLevel } from "@/lib/format";
+
 /** Shape returned by GET /api/courses — shared by the route and the catalog UI. */
 export type CatalogApiCourse = {
   id: string;
@@ -47,12 +49,8 @@ export type CatalogSortId = (typeof sortOptions)[number]["id"];
 /** Rupee granularity of the max-price slider. */
 export const PRICE_STEP_RUPEES = 100;
 
-export function levelLabel(level: string) {
-  if (level === "BEGINNER") return "Beginner";
-  if (level === "INTERMEDIATE") return "Intermediate";
-  if (level === "ADVANCED") return "Advanced";
-  return level;
-}
+/** Level enum → display label; matches the `filterLevels` names. */
+export const levelLabel = formatLevel;
 
 export function slugFromCategory(category: string) {
   if (category === ALL_FILTER) return null;

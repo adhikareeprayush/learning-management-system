@@ -1,22 +1,35 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { listNewsletterCampaigns, listNewsletterSubscribers } from "@/lib/newsletter";
-import { requireAdminPage } from "@/lib/page-guards";
+import { getEmailMode } from "@/lib/email";
+import {
+  listNewsletterCampaigns,
+  listNewsletterSendProgress,
+  listNewsletterSubscribers,
+} from "@/lib/newsletter";
+import { loginRedirectPath, requireAdminPage } from "@/lib/page-guards";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 import AdminNewsletterClient from "./newsletter-client";
 
+export const metadata: Metadata = { title: "Newsletter" };
+
 export default async function AdminNewsletterPage() {
-  await requireAdminPage();
+  const session = await requireAdminPage();
 
   const ctx = await resolveTenantFromHeaders();
-  if (!ctx) redirect("/login");
+  if (!ctx) redirect(await loginRedirectPath());
 
   const [subscribers, campaigns] = await Promise.all([
     listNewsletterSubscribers(ctx.organizationId),
     listNewsletterCampaigns(ctx.organizationId),
   ]);
+  const progress = await listNewsletterSendProgress(
+    campaigns.filter((campaign) => campaign.status === "SENDING").map((campaign) => campaign.id),
+  );
 
   return (
     <AdminNewsletterClient
+      emailMode={getEmailMode()}
+      adminEmail={session.user.email}
       initialSubscribers={subscribers.map((subscriber) => ({
         id: subscriber.id,
         email: subscriber.email,
@@ -31,11 +44,14 @@ export default async function AdminNewsletterPage() {
         subject: campaign.subject,
         body: campaign.body,
         status: campaign.status,
+        startedAt: campaign.startedAt?.toISOString() ?? null,
         sentAt: campaign.sentAt?.toISOString() ?? null,
         recipientCount: campaign.recipientCount,
+        failedCount: campaign.failedCount,
         createdAt: campaign.createdAt.toISOString(),
         createdBy: campaign.createdBy,
       }))}
+      initialProgress={Object.fromEntries(progress)}
     />
   );
 }

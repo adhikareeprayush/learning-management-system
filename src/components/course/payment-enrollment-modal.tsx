@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { FlashBanner } from "@/components/ui/flash-banner";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { submitCoursePayment } from "@/lib/enroll-client";
+import { UPLOAD_ACCEPT, uploadFile } from "@/lib/upload-client";
 
 export type PaymentMethodOption = {
   id: string;
@@ -125,18 +126,7 @@ export function PaymentEnrollmentModal({
     setFlash(null);
 
     try {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("provider", "imagekit");
-      form.append("purpose", "payment-screenshot");
-
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: form });
-      if (!uploadRes.ok) throw new Error(await responseError(uploadRes));
-
-      const uploadBody = (await uploadRes.json()) as { upload?: { url?: unknown } };
-      const screenshotUrl =
-        typeof uploadBody.upload?.url === "string" ? uploadBody.upload.url : null;
-      if (!screenshotUrl) throw new Error("Upload succeeded but no file URL was returned");
+      const { url: screenshotUrl } = await uploadFile(file, "payment-screenshot");
 
       const result = await submitCoursePayment({
         courseId,
@@ -305,7 +295,7 @@ export function PaymentEnrollmentModal({
                   )}
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    accept={UPLOAD_ACCEPT.image}
                     className="sr-only"
                     onChange={(e) => selectFile(e.target.files?.[0] ?? null)}
                   />

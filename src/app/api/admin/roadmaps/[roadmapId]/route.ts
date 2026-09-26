@@ -4,7 +4,7 @@ import {
   deleteRoadmap,
   getAdminRoadmap,
   parseRoadmapInput,
-  recalculateRoadmapEnrollments,
+  syncRoadmapLearners,
   updateRoadmap,
 } from "@/lib/roadmap-admin";
 
@@ -35,7 +35,13 @@ export async function PATCH(request: Request, { params }: Params) {
     const result = await updateRoadmap(auth.organizationId, roadmapId, parsed.input);
     if (!result.ok) return jsonError(result.error, result.status);
     if (result.coursesChanged) {
-      after(() => recalculateRoadmapEnrollments(result.roadmap.id));
+      after(() =>
+        syncRoadmapLearners(
+          auth.organizationId,
+          result.roadmap.id,
+          result.addedCourseIds,
+        ),
+      );
     }
     return Response.json({ roadmap: result.roadmap });
   } catch (error) {

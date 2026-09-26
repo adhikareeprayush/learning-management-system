@@ -20,11 +20,13 @@ import { RoadmapCoursePicker } from "@/components/admin/roadmap-course-picker";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { Button } from "@/components/ui/button";
 import { FlashBanner } from "@/components/ui/flash-banner";
+import { courseCategoryOptions } from "@/lib/course-categories";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import type {
   AdminRoadmapCourse,
   AdminRoadmapDetail,
 } from "@/lib/roadmap-admin";
+import { UPLOAD_ACCEPT, uploadFile } from "@/lib/upload-client";
 
 type Status = AdminRoadmapDetail["status"];
 type Level = AdminRoadmapDetail["level"];
@@ -97,6 +99,8 @@ export function RoadmapForm({
 
   const savedId = saved?.id;
   const savedStatus = saved?.status;
+  // Keeps a legacy category that predates the shared list selectable.
+  const categoryOptions = courseCategoryOptions(saved?.category);
 
   useEffect(() => {
     // Drop the one-shot ?created flag so a reload doesn't repeat the banner.
@@ -200,16 +204,8 @@ export function RoadmapForm({
     setBusy("upload");
     setError(null);
     try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("provider", "imagekit");
-      const res = await fetch("/api/upload", { method: "POST", body: form });
-      if (!res.ok) throw new Error(await responseError(res));
-      const data = (await res.json()) as { upload?: { url?: unknown } };
-      if (typeof data.upload?.url !== "string") {
-        throw new Error("Upload succeeded but no URL was returned");
-      }
-      update("thumbnail", data.upload.url);
+      const { url } = await uploadFile(file, "roadmap-cover");
+      update("thumbnail", url);
       setFlash(
         saved
           ? "Cover image uploaded. Save to apply it."
@@ -379,13 +375,18 @@ export function RoadmapForm({
           </label>
           <label className="block">
             <span className={labelClass}>Category</span>
-            <input
-              maxLength={80}
+            <select
               value={details.category}
               onChange={(event) => update("category", event.target.value)}
               className={fieldClass}
-              placeholder="e.g. Web Development"
-            />
+            >
+              <option value="">No category</option>
+              {categoryOptions.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="block">
             <span className={labelClass}>Level</span>
@@ -459,7 +460,7 @@ export function RoadmapForm({
                   {busy === "upload" ? "Uploading…" : "Upload image"}
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/webp,image/avif"
+                    accept={UPLOAD_ACCEPT.image}
                     className="sr-only"
                     onChange={(event) => {
                       const file = event.target.files?.[0];
@@ -488,7 +489,8 @@ export function RoadmapForm({
           <h2 className="font-display text-xl text-brand-navy">Courses</h2>
           <p className="mt-1 mb-4 text-sm text-muted">
             Learners take these courses in order. Enrolling in the roadmap enrolls
-            them in every published course.
+            them in every free published course; paid ones are bought separately.
+            Free courses added later are added for current learners too.
           </p>
           <RoadmapCoursePicker
             selected={courses}

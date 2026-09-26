@@ -14,6 +14,29 @@ import type { getAdminDashboardData } from "@/lib/dashboard-data";
 
 type DashboardData = Awaited<ReturnType<typeof getAdminDashboardData>>;
 
+/** Y-axis for whole-number counts: a max and tick count whose step is an integer. */
+function countAxis(series: { data: number[] }[]) {
+  const peak = Math.max(1, ...series.flatMap((s) => s.data));
+  const tickAmount = Math.min(peak, 5);
+  return {
+    min: 0,
+    max: Math.ceil(peak / tickAmount) * tickAmount,
+    tickAmount,
+    labels: {
+      style: { colors: chartColors.muted },
+      formatter: (value: number) => String(Math.round(value)),
+    },
+  };
+}
+
+const statLinks: Record<string, string> = {
+  users: "/admin/users",
+  courses: "/admin/courses",
+  enrolled: "/admin/reports",
+  instructors: "/admin/users?role=INSTRUCTOR",
+  payments: "/admin/payments",
+};
+
 export function AdminDashboardView({
   userName,
   initialData,
@@ -48,19 +71,12 @@ export function AdminDashboardView({
 
       <div className="flex items-center gap-2 rounded-xl border border-brand-purple/15 bg-[#f7f5ff] px-3 py-2 text-sm text-brand-navy">
         <Shield className="size-4 shrink-0 text-brand-purple" />
-        Full platform access · live data
+        Admin access — manage courses, users, payments and settings for your institute.
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 sm:gap-4">
+      <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-5">
         {stats.map((stat) => {
-          const href =
-            stat.id === "users"
-              ? "/admin/users"
-              : stat.id === "courses"
-                ? "/admin/courses"
-                : stat.id === "enrolled"
-                  ? "/admin/reports"
-                  : "/admin/users?role=INSTRUCTOR";
+          const href = statLinks[stat.id] ?? "/admin";
           return (
             <Link key={stat.id} href={href} className="block min-w-0">
               <StatsCard
@@ -104,9 +120,7 @@ export function AdminDashboardView({
                 axisTicks: { show: false },
                 labels: { style: { colors: chartColors.muted } },
               },
-              yaxis: {
-                labels: { style: { colors: chartColors.muted } },
-              },
+              yaxis: countAxis(platformGrowth.series),
               legend: {
                 position: "top",
                 horizontalAlign: "right",
@@ -179,14 +193,12 @@ export function AdminDashboardView({
                 hideOverlappingLabels: true,
               },
             },
-            yaxis: {
-              labels: { style: { colors: chartColors.muted } },
-            },
+            yaxis: countAxis(engagementWeekly.series),
           }}
         />
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-2 lg:gap-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start lg:gap-5">
         <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex min-w-0 items-center gap-2">

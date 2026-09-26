@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
-import { cleanString, jsonError, requireSession, requireTenantApi, type AppSession } from "@/lib/api";
+import { isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import { boundedText, isCourseAdmin, readJsonObject } from "@/lib/course-access";
+import {
+  notifyCourseReviewed,
+  notifyCourseSubmittedForReview,
+} from "@/lib/email-notifications";
+import { parseMediaUrl } from "@/lib/media-url";
 import { formatCoursePrice } from "@/lib/pricing";
-import { isOrgAdmin } from "@/lib/tenant";
-import type { OrganizationMember } from "@prisma/client";
 
 type Params = { params: Promise<{ courseId: string }> };
 
 // Stays well below Postgres int4 max so a typo can't overflow the column.
 const MAX_MINOR_UNITS = 1_000_000_000;
-
-function isCourseAdmin(session: AppSession, member: OrganizationMember | null) {
-  return session.user.role === "ADMIN" || isOrgAdmin(member);
-}
 
 function parseMinorUnits(value: unknown) {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MAX_MINOR_UNITS
@@ -115,6 +116,43 @@ export async function GET(_request: Request, { params }: Params) {
   }
 }
 
+const COURSE_STATUSES = ["DRAFT", "IN_REVIEW", "PUBLISHED", "ARCHIVED"] as const;
+type CourseStatus = (typeof COURSE_STATUSES)[number];
+const LEVELS = ["BEGINNER", "INTERMEDIATE", "ADVANCED"] as const;
+
+const TITLE_MAX = 200;
+const DESCRIPTION_MAX = 5_000;
+const CATEGORY_MAX = 100;
+const OUTCOME_MAX = 300;
+const MAX_OUTCOMES = 20;
+const REVIEW_NOTE_MAX = 1_000;
+
+/** Status changes an instructor may make on their own course; everything else needs an admin. */
+const INSTRUCTOR_TRANSITIONS: Record<CourseStatus, CourseStatus[]> = {
+  DRAFT: ["DRAFT", "IN_REVIEW"],
+  IN_REVIEW: ["DRAFT", "IN_REVIEW"],
+  PUBLISHED: ["DRAFT", "PUBLISHED"],
+  ARCHIVED: ["ARCHIVED"],
+};
+
+function isCourseStatus(value: unknown): value is CourseStatus {
+  return COURSE_STATUSES.includes(value as CourseStatus);
+}
+
+function parseOutcomes(value: unknown): { ok: true; value: string[] } | { ok: false; error: string } {
+  if (!Array.isArray(value)) return { ok: false, error: "outcomes must be a list" };
+  const outcomes = value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean);
+  if (outcomes.length > MAX_OUTCOMES) {
+    return { ok: false, error: `Add at most ${MAX_OUTCOMES} learning outcomes` };
+  }
+  if (outcomes.some((item) => item.length > OUTCOME_MAX)) {
+    return { ok: false, error: `Each learning outcome must be at most ${OUTCOME_MAX} characters` };
+  }
+  return { ok: true, value: outcomes };
+}
+
 export async function PATCH(request: Request, { params }: Params) {
   try {
     const tenant = await requireTenantApi();
@@ -124,12 +162,13 @@ export async function PATCH(request: Request, { params }: Params) {
     if (!session) return jsonError("Unauthorized", 401);
 
     const { courseId } = await params;
-    const body = await request.json();
-    const status = body.status as string | undefined;
-    const allowed = ["DRAFT", "IN_REVIEW", "PUBLISHED", "ARCHIVED"] as const;
-    if (status && !allowed.includes(status as (typeof allowed)[number])) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+    const body = await readJsonObject(request);
+    if (body instanceof Response) return body;
+
+    if (body.status !== undefined && !isCourseStatus(body.status)) {
+      return jsonError("Invalid status", 400);
     }
+    const status = body.status as CourseStatus | undefined;
 
     const existing = await prisma.course.findFirst({
       where: {
@@ -142,47 +181,94 @@ export async function PATCH(request: Request, { params }: Params) {
       return NextResponse.json({ error: "Course not found" }, { status: 404 });
     }
 
-    const isOwner = existing.instructorId === session.user.id;
     const isAdmin = isCourseAdmin(session, tenant.member);
+    // A demoted instructor keeps their courses but can no longer edit them.
+    const isOwner =
+      existing.instructorId === session.user.id && isTeacher(session, tenant.member);
     if (!isOwner && !isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    if (body.title !== undefined && !cleanString(body.title, 200)) {
-      return jsonError("title is required", 400);
-    }
+    const data: Prisma.CourseUpdateInput = {};
 
-    let price: number | undefined;
-    if (body.price !== undefined) {
-      const parsed = parseMinorUnits(body.price);
-      if (parsed === null) {
-        return jsonError("price must be a whole number of cents (0 or more)", 400);
+    if (body.title !== undefined) {
+      const title = boundedText(body.title, "title", TITLE_MAX, { required: true });
+      if (!title.ok) return jsonError(title.error, 400);
+      data.title = title.value;
+    }
+    if (body.description !== undefined) {
+      const description = boundedText(body.description, "description", DESCRIPTION_MAX);
+      if (!description.ok) return jsonError(description.error, 400);
+      data.description = description.value || null;
+    }
+    if (body.category !== undefined) {
+      const category = boundedText(body.category, "category", CATEGORY_MAX);
+      if (!category.ok) return jsonError(category.error, 400);
+      data.category = category.value || null;
+    }
+    // Only a changed thumbnail is validated, so older stored URLs keep saving.
+    if (body.thumbnail !== undefined && body.thumbnail !== existing.thumbnail) {
+      const thumbnail = parseMediaUrl(body.thumbnail, "image");
+      if (!thumbnail.ok) return jsonError(thumbnail.error, 400);
+      data.thumbnail = thumbnail.url;
+    }
+    if (body.level !== undefined) {
+      if (!LEVELS.includes(body.level as (typeof LEVELS)[number])) {
+        return jsonError("level must be BEGINNER, INTERMEDIATE or ADVANCED", 400);
       }
-      price = parsed;
+      data.level = body.level as (typeof LEVELS)[number];
     }
-
-    let priceNpr: number | undefined;
+    if (body.outcomes !== undefined) {
+      const outcomes = parseOutcomes(body.outcomes);
+      if (!outcomes.ok) return jsonError(outcomes.error, 400);
+      data.outcomes = outcomes.value;
+    }
+    // Courses are sold in NPR only; the legacy USD `price` field is ignored.
     if (body.priceNpr !== undefined) {
-      const parsed = parseMinorUnits(body.priceNpr);
-      if (parsed === null || (parsed > 0 && parsed < 1000)) {
+      const priceNpr = parseMinorUnits(body.priceNpr);
+      if (priceNpr === null || (priceNpr > 0 && priceNpr < 1000)) {
         return jsonError("priceNpr must be 0 (free) or at least 1000 paisa (Rs 10)", 400);
       }
-      priceNpr = parsed;
+      data.priceNpr = priceNpr;
+    }
+    if (body.duration !== undefined && Number.isFinite(Number(body.duration))) {
+      data.duration = Math.max(0, Math.round(Number(body.duration)));
+    }
+    if (body.featured !== undefined && isAdmin) {
+      data.featured = Boolean(body.featured);
     }
 
-    if (status && !isAdmin) {
-      const instructorTransitions: Record<string, string[]> = {
-        DRAFT: ["DRAFT", "IN_REVIEW"],
-        IN_REVIEW: ["DRAFT", "IN_REVIEW"],
-        PUBLISHED: ["DRAFT", "PUBLISHED"],
-        ARCHIVED: ["DRAFT", "ARCHIVED"],
-      };
-      if (!instructorTransitions[existing.status]?.includes(status)) {
-        return NextResponse.json(
-          { error: "Only an administrator can publish or archive a course" },
-          { status: 403 },
-        );
-      }
+    let reviewNote: string | undefined;
+    if (body.reviewNote !== undefined) {
+      if (!isAdmin) return jsonError("Only an administrator can leave a review note", 403);
+      const note = boundedText(body.reviewNote, "reviewNote", REVIEW_NOTE_MAX);
+      if (!note.ok) return jsonError(note.error, 400);
+      reviewNote = note.value;
+    }
+
+    const statusChanged = status !== undefined && status !== existing.status;
+    if (status && !isAdmin && !INSTRUCTOR_TRANSITIONS[existing.status].includes(status)) {
+      return NextResponse.json(
+        {
+          error:
+            existing.status === "ARCHIVED"
+              ? "Only an administrator can restore an archived course"
+              : "Only an administrator can publish or archive a course",
+        },
+        { status: 403 },
+      );
+    }
+
+    // An admin acting on someone else's course is moderating it: the decision is recorded and the instructor told.
+    const moderating = isAdmin && existing.instructorId !== session.user.id;
+    const reviewed = moderating && statusChanged && status !== "IN_REVIEW";
+    if (
+      reviewed &&
+      status === "DRAFT" &&
+      (existing.status === "IN_REVIEW" || existing.status === "PUBLISHED") &&
+      !reviewNote
+    ) {
+      return jsonError("Add a review note telling the instructor what to change", 400);
     }
 
     if (status === "IN_REVIEW" || status === "PUBLISHED") {
@@ -190,19 +276,10 @@ export async function PATCH(request: Request, { params }: Params) {
         where: { courseId: existing.id },
       });
       const proposed = {
-        title: body.title !== undefined ? cleanString(body.title, 200) : existing.title,
-        description:
-          body.description !== undefined
-            ? cleanString(body.description, 20_000)
-            : existing.description,
-        category:
-          body.category !== undefined
-            ? cleanString(body.category, 100)
-            : existing.category,
-        thumbnail:
-          body.thumbnail !== undefined
-            ? cleanString(body.thumbnail, 2_000)
-            : existing.thumbnail,
+        title: data.title ?? existing.title,
+        description: data.description !== undefined ? data.description : existing.description,
+        category: data.category !== undefined ? data.category : existing.category,
+        thumbnail: data.thumbnail !== undefined ? data.thumbnail : existing.thumbnail,
       };
       const missing = [
         !proposed.title && "title",
@@ -219,22 +296,27 @@ export async function PATCH(request: Request, { params }: Params) {
       }
     }
 
+    if (status) data.status = status;
+    if (statusChanged && status === "IN_REVIEW") {
+      // The previous feedback stays visible until the instructor resubmits.
+      data.reviewNote = null;
+    } else if (reviewed) {
+      data.reviewNote = reviewNote || null;
+      data.reviewedAt = new Date();
+    } else if (reviewNote !== undefined && isAdmin) {
+      data.reviewNote = reviewNote || null;
+    }
+
     const course = await prisma.course.update({
       where: { id: existing.id },
-      data: {
-        ...(status ? { status: status as (typeof allowed)[number] } : {}),
-        ...(body.title !== undefined ? { title: cleanString(body.title, 200) } : {}),
-        ...(body.description !== undefined ? { description: cleanString(body.description, 20_000) || null } : {}),
-        ...(body.category !== undefined ? { category: cleanString(body.category, 100) || null } : {}),
-        ...(body.thumbnail !== undefined ? { thumbnail: cleanString(body.thumbnail, 2_000) || null } : {}),
-        ...(body.level && ["BEGINNER", "INTERMEDIATE", "ADVANCED"].includes(body.level) ? { level: body.level } : {}),
-        ...(body.featured !== undefined && isAdmin ? { featured: Boolean(body.featured) } : {}),
-        ...(Array.isArray(body.outcomes) ? { outcomes: body.outcomes.map((item: unknown) => String(item).trim()).filter(Boolean).slice(0, 30) } : {}),
-        ...(price !== undefined ? { price } : {}),
-        ...(priceNpr !== undefined ? { priceNpr } : {}),
-        ...(body.duration !== undefined && Number.isFinite(Number(body.duration)) ? { duration: Math.max(0, Math.round(Number(body.duration))) } : {}),
-      },
+      data,
     });
+
+    if (statusChanged && status === "IN_REVIEW") {
+      notifyCourseSubmittedForReview(course.id);
+    } else if (reviewed) {
+      notifyCourseReviewed(course.id);
+    }
 
     return NextResponse.json({ course });
   } catch (error) {
@@ -263,7 +345,9 @@ export async function DELETE(_request: Request, { params }: Params) {
     });
     if (!existing) return jsonError("Course not found", 404);
 
-    if (!isCourseAdmin(session, tenant.member) && existing.instructorId !== session.user.id) {
+    const isOwner =
+      existing.instructorId === session.user.id && isTeacher(session, tenant.member);
+    if (!isCourseAdmin(session, tenant.member) && !isOwner) {
       return jsonError("Forbidden", 403);
     }
 

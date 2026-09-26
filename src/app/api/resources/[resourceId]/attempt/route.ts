@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { jsonError, requireSession, requireTenantApi } from "@/lib/api";
-import { canAccessLesson } from "@/lib/course-access";
+import { maybeIssueCertificate } from "@/lib/certificates";
+import { canAccessLesson, readJsonObject } from "@/lib/course-access";
 import {
   parseQuizPayload,
   sanitizeQuizAnswers,
@@ -28,7 +29,11 @@ export async function POST(request: Request, { params }: Params) {
     where: { id: resourceId },
     include: {
       lesson: {
-        select: { id: true, course: { select: { organizationId: true } } },
+        select: {
+          id: true,
+          courseId: true,
+          course: { select: { organizationId: true } },
+        },
       },
     },
   });
@@ -50,7 +55,8 @@ export async function POST(request: Request, { params }: Params) {
   const payload = parseQuizPayload(resource.description);
   if (!payload) return jsonError("Quiz is not configured", 400);
 
-  const body = await request.json().catch(() => ({}));
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
   const answers = sanitizeQuizAnswers(payload, body.answers);
 
   // Scored server-side: learners never receive the answer key.
@@ -65,6 +71,13 @@ export async function POST(request: Request, { params }: Params) {
       answers,
     },
   });
+
+  // Passing the last required quiz can complete the course.
+  if (result.passed) {
+    await maybeIssueCertificate(session.user.id, resource.lesson.courseId).catch((error) => {
+      console.error("[certificates] issue after quiz attempt failed", error);
+    });
+  }
 
   return Response.json({
     attempt: {

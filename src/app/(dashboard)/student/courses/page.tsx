@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -13,6 +14,7 @@ import { ProgressBar } from "@/components/dashboard/progress-bar";
 import { getServerSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
+import { loginRedirectPath } from "@/lib/page-guards";
 
 async function getStudentEnrollments(studentId: string) {
   const enrollments = await prisma.enrollment.findMany({
@@ -76,9 +78,11 @@ async function getStudentEnrollments(studentId: string) {
   });
 }
 
+export const metadata: Metadata = { title: "My courses" };
+
 export default async function StudentCoursesPage() {
   const session = await getServerSession();
-  if (!session) redirect("/login");
+  if (!session) redirect(await loginRedirectPath());
 
   const courses = await getStudentEnrollments(session.user.id);
   const inProgress = courses.filter((c) => c.progress < 100);
@@ -88,7 +92,7 @@ export default async function StudentCoursesPage() {
     <div className="space-y-6 sm:space-y-8">
       <DashboardHeader
         title="My courses"
-        subtitle="Your enrollments from the database — continue where you left off."
+        subtitle="Every course you’re enrolled in — pick up where you left off."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted">

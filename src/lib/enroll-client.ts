@@ -1,9 +1,17 @@
+/** Returned (403) when an instructor/admin tries to enroll; see staffEnrollBlock. */
+export type StaffEnrollNotice = {
+  role: "ADMIN" | "INSTRUCTOR";
+  previewHref: string;
+  message: string;
+};
+
 export type EnrollResponse = {
   enrollment?: { id: string };
   courseSlug?: string;
   roleChanged?: boolean;
   alreadyEnrolled?: boolean;
   error?: string;
+  staff?: StaffEnrollNotice;
 };
 
 export async function enrollInCourse(courseId: string): Promise<{
@@ -14,6 +22,7 @@ export async function enrollInCourse(courseId: string): Promise<{
   error?: string;
   status: number;
   paymentRequired?: boolean;
+  staff?: StaffEnrollNotice;
 }> {
   const res = await fetch("/api/student/enrollments", {
     method: "POST",
@@ -41,6 +50,7 @@ export async function enrollInCourse(courseId: string): Promise<{
     status: res.status,
     error: data.error ?? "Enrollment failed",
     paymentRequired: res.status === 402,
+    staff: data.staff,
   };
 }
 
@@ -99,6 +109,7 @@ export type EnrollRoadmapClientResult = {
   courses?: RoadmapCourseEnrollSummary[];
   error?: string;
   status: number;
+  staff?: StaffEnrollNotice;
 };
 
 export async function enrollInRoadmap(
@@ -123,6 +134,7 @@ export async function enrollInRoadmap(
       ok: false,
       status: res.status,
       error: data.error ?? "Enrollment failed",
+      staff: data.staff,
     };
   }
 

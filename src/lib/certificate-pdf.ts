@@ -3,6 +3,8 @@ import path from "node:path";
 import fontkit from "@pdf-lib/fontkit";
 import {
   PDFDocument,
+  PDFName,
+  PDFString,
   degrees,
   rgb,
   setCharacterSpacing,
@@ -17,6 +19,7 @@ import {
   LOGO_MARK,
   courseCertificateContent,
   roadmapCertificateContent,
+  verifyUrlLabel,
   type CertificateContent,
 } from "@/lib/certificate-design";
 
@@ -27,6 +30,7 @@ export type CertificatePdfInput = {
   category?: string | null;
   credentialId: string;
   issuedAt: Date;
+  verifyUrl: string;
 };
 
 export type RoadmapCertificatePdfInput = {
@@ -36,6 +40,7 @@ export type RoadmapCertificatePdfInput = {
   category?: string | null;
   credentialId: string;
   issuedAt: Date;
+  verifyUrl: string;
 };
 
 function hex(value: string) {
@@ -43,7 +48,7 @@ function hex(value: string) {
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
 }
 
-const COLOR = {
+export const COLOR = {
   paper: hex(CERTIFICATE.paper),
   navy: hex(CERTIFICATE.navy),
   teal: hex(CERTIFICATE.teal),
@@ -65,7 +70,7 @@ const FONT_FILES = {
 } as const;
 
 type FontKey = keyof typeof FONT_FILES;
-type Fonts = Record<FontKey, PDFFont>;
+export type Fonts = Record<FontKey, PDFFont>;
 
 let cachedFontBytes: Record<FontKey, Uint8Array> | null = null;
 
@@ -84,10 +89,11 @@ const H = L.page.height;
 const CX = L.page.width / 2;
 
 /** The embedded fonts are Latin subsets: fold accents, drop what's left over. */
-function fit(text: string, font: PDFFont) {
+export function fit(text: string, font: PDFFont) {
   const supported = new Set(font.getCharacterSet());
   const has = (ch: string) => supported.has(ch.codePointAt(0)!);
-  return [...text]
+  // Intl output (currency, times) uses no-break spaces the subsets lack.
+  return [...text.replace(/[\u00a0\u202f]/g, " ")]
     .map((ch) => {
       if (has(ch)) return ch;
       const folded = ch.normalize("NFD").replace(/\p{M}/gu, "");
@@ -98,7 +104,7 @@ function fit(text: string, font: PDFFont) {
     .trim();
 }
 
-function textWidth(text: string, font: PDFFont, size: number, tracking = 0) {
+export function textWidth(text: string, font: PDFFont, size: number, tracking = 0) {
   return (
     font.widthOfTextAtSize(text, size) +
     tracking * Math.max(0, [...text].length - 1)
@@ -117,19 +123,25 @@ type TextOptions = {
 };
 
 /** Draws text and returns its width. */
-function drawText(page: PDFPage, text: string, options: TextOptions) {
+export function drawText(page: PDFPage, text: string, options: TextOptions) {
   const { x, baseline, font, size, color, align = "left", tracking = 0 } =
     options;
   const width = textWidth(text, font, size, tracking);
   const startX =
     align === "center" ? x - width / 2 : align === "right" ? x - width : x;
   if (tracking) page.pushOperators(setCharacterSpacing(tracking));
-  page.drawText(text, { x: startX, y: H - baseline, size, font, color });
+  page.drawText(text, {
+    x: startX,
+    y: page.getHeight() - baseline,
+    size,
+    font,
+    color,
+  });
   if (tracking) page.pushOperators(setCharacterSpacing(0));
   return width;
 }
 
-function wrapText(
+export function wrapText(
   text: string,
   font: PDFFont,
   size: number,
@@ -183,7 +195,7 @@ function fitLines(
 }
 
 /** Brand mark (see LOGO_MARK), centred on (cx, cy) with cy from the top. */
-function drawMark(
+export function drawMark(
   page: PDFPage,
   cx: number,
   cy: number,
@@ -192,8 +204,9 @@ function drawMark(
   opacity = 1,
 ) {
   const s = size / LOGO_MARK.viewBox;
+  const height = page.getHeight();
   const px = (x: number) => cx + (x - LOGO_MARK.center.x) * s;
-  const py = (y: number) => H - (cy + (y - LOGO_MARK.center.y) * s);
+  const py = (y: number) => height - (cy + (y - LOGO_MARK.center.y) * s);
 
   for (const [x1, y1, x2, y2] of LOGO_MARK.edges) {
     page.drawLine({
@@ -548,9 +561,64 @@ function drawFooter(page: PDFPage, fonts: Fonts, content: CertificateContent) {
     color: COLOR.ink,
     tracking: 0.6,
   });
+
+  const prefix = "Verify at ";
+  const url = fit(verifyUrlLabel(content.verifyUrl), fonts.ui);
+  const prefixW = textWidth(prefix, fonts.ui, L.verifySize, 0.3);
+  const urlW = textWidth(url, fonts.ui, L.verifySize, 0.3);
+  const verifyStart = CX - (prefixW + urlW) / 2;
+  drawText(page, prefix, {
+    x: verifyStart,
+    baseline: L.verifyBaseline,
+    font: fonts.ui,
+    size: L.verifySize,
+    color: COLOR.muted,
+    tracking: 0.3,
+  });
+  drawText(page, url, {
+    x: verifyStart + prefixW,
+    baseline: L.verifyBaseline,
+    font: fonts.ui,
+    size: L.verifySize,
+    color: COLOR.teal,
+    tracking: 0.3,
+  });
+  addLink(
+    page,
+    {
+      x: verifyStart,
+      top: L.verifyBaseline - L.verifySize,
+      width: prefixW + urlW,
+      height: L.verifySize * 1.4,
+    },
+    content.verifyUrl,
+  );
 }
 
-async function renderCertificate(content: CertificateContent) {
+/** Clickable URI area; `top` is measured from the top of the page like text baselines. */
+export function addLink(
+  page: PDFPage,
+  box: { x: number; top: number; width: number; height: number },
+  uri: string,
+) {
+  const { context } = page.doc;
+  const y = page.getHeight() - box.top - box.height;
+  const link = context.register(
+    context.obj({
+      Type: "Annot",
+      Subtype: "Link",
+      Rect: [box.x, y, box.x + box.width, y + box.height],
+      Border: [0, 0, 0],
+      A: { Type: "Action", S: "URI", URI: PDFString.of(uri) },
+    }),
+  );
+  const existing = page.node.Annots();
+  if (existing) existing.push(link);
+  else page.node.set(PDFName.of("Annots"), context.obj([link]));
+}
+
+/** New PDF with the brand fonts embedded (subset), shared with receipts. */
+export async function createBrandPdf() {
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
   const bytes = loadFontBytes();
@@ -562,6 +630,11 @@ async function renderCertificate(content: CertificateContent) {
       ]),
     ),
   ) as Fonts;
+  return { pdfDoc, fonts };
+}
+
+async function renderCertificate(content: CertificateContent) {
+  const { pdfDoc, fonts } = await createBrandPdf();
 
   pdfDoc.setTitle(`${content.title} — ${content.label}`);
   pdfDoc.setSubject(`${content.label} for ${content.studentName}`);

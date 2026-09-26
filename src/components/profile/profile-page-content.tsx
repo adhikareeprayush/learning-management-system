@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { ProfileEditor } from "@/components/profile/profile-editor";
 import { getServerSession } from "@/lib/auth";
+import { loginRedirectPath } from "@/lib/page-guards";
 import { getProfileBundle } from "@/lib/profile-data";
 
 type Props = {
@@ -14,10 +15,10 @@ export async function ProfilePageContent({
   subtitle = "Your identity, stats, and account details.",
 }: Props) {
   const session = await getServerSession();
-  if (!session) redirect("/login");
+  if (!session) redirect(await loginRedirectPath());
 
   const bundle = await getProfileBundle(session.user.id, session.user.role ?? "STUDENT");
-  if (!bundle) redirect("/login");
+  if (!bundle) redirect(await loginRedirectPath());
 
   const { user, extended, stats, activity } = bundle;
   const assignmentsDue =

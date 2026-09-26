@@ -1,5 +1,8 @@
+import type { Metadata } from "next";
 import { ProfilePageContent } from "@/components/profile/profile-page-content";
 import { requireAdminPage } from "@/lib/page-guards";
+
+export const metadata: Metadata = { title: "Profile" };
 
 export default async function AdminProfilePage() {
   await requireAdminPage();

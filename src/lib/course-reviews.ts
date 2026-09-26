@@ -152,3 +152,42 @@ export async function getCourseReviewsBundle(
     isEnrolled,
   };
 }
+
+/** Newest reviews across the institute, for admin moderation. */
+export async function listRecentReviewsForModeration(organizationId: string, take = 100) {
+  const reviews = await prisma.review.findMany({
+    where: { course: { organizationId } },
+    orderBy: { createdAt: "desc" },
+    take,
+    select: {
+      id: true,
+      rating: true,
+      comment: true,
+      createdAt: true,
+      course: { select: { id: true, slug: true, title: true } },
+      student: {
+        select: { id: true, name: true, email: true, image: true, deletedAt: true },
+      },
+    },
+  });
+
+  return reviews.map((review) => ({
+    id: review.id,
+    rating: review.rating,
+    comment: review.comment,
+    createdAt: review.createdAt.toISOString(),
+    course: review.course,
+    student: {
+      id: review.student.id,
+      name: review.student.name,
+      // Anonymized accounts keep a placeholder address; don't show it.
+      email: review.student.deletedAt ? null : review.student.email,
+      image: review.student.image,
+      deleted: Boolean(review.student.deletedAt),
+    },
+  }));
+}
+
+export type ModerationReview = Awaited<
+  ReturnType<typeof listRecentReviewsForModeration>
+>[number];

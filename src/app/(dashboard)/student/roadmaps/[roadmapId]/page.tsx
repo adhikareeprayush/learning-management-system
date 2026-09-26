@@ -13,12 +13,14 @@ import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { ProgressBar } from "@/components/dashboard/progress-bar";
 import { getServerSession } from "@/lib/auth";
 import { courseRequiresPayment, formatCoursePrice } from "@/lib/pricing";
+import { syncCertificatesForStudent } from "@/lib/certificates";
+import { formatLevel } from "@/lib/format";
 import {
-  formatLevel,
   getRoadmapDetail,
   type RoadmapCourseProgress,
 } from "@/lib/roadmaps";
 import { requireTenantContext } from "@/lib/tenant";
+import { loginRedirectPath } from "@/lib/page-guards";
 
 type Props = { params: Promise<{ roadmapId: string }> };
 
@@ -45,10 +47,12 @@ function courseAction(course: RoadmapCourseProgress) {
 
 export default async function StudentRoadmapDetailPage({ params }: Props) {
   const session = await getServerSession();
-  if (!session) redirect("/login");
+  if (!session) redirect(await loginRedirectPath());
 
   const { roadmapId } = await params;
   const ctx = await requireTenantContext();
+  // Path progress counts certified courses; issue any that are now earned.
+  await syncCertificatesForStudent(session.user.id);
   const roadmap = await getRoadmapDetail(
     ctx.organizationId,
     roadmapId,
@@ -171,14 +175,16 @@ export default async function StudentRoadmapDetailPage({ params }: Props) {
                         {course.hasCertificate
                           ? " · Course certificate earned"
                           : course.enrolled
-                            ? ""
+                            ? course.progress >= 100
+                              ? " · Pass all quizzes to earn the certificate"
+                              : ""
                             : action.paid
                               ? " · Purchase required"
                               : " · Not enrolled yet"}
                       </p>
                       {course.enrolled ? (
                         <div className="mt-2 max-w-xs">
-                          <ProgressBar value={course.progress} />
+                          <ProgressBar value={course.progress} label="Progress" />
                         </div>
                       ) : null}
                     </div>

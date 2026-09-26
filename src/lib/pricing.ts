@@ -1,3 +1,8 @@
+/** Courses are sold in NPR only; `priceNpr` (paisa) is authoritative and 0 means free. */
+export const MIN_PAID_NPR_PAISA = 1000;
+
+type Priced = { priceNpr: number };
+
 export function formatNprFromPaisa(paisa: number) {
   const rupees = paisa / 100;
   return new Intl.NumberFormat("en-NP", {
@@ -7,20 +12,17 @@ export function formatNprFromPaisa(paisa: number) {
   }).format(rupees);
 }
 
-export function coursePaymentAmountPaisa(course: { price: number; priceNpr: number }) {
-  if (course.priceNpr >= 1000) return course.priceNpr;
-  if (course.price > 0) {
-    return Math.max(1000, Math.round((course.price / 100) * 135 * 100));
-  }
-  return 0;
+/** What the student is charged in paisa; below the paid minimum counts as free (0). */
+export function coursePaymentAmountPaisa(course: Priced) {
+  return course.priceNpr >= MIN_PAID_NPR_PAISA ? course.priceNpr : 0;
 }
 
-export function courseRequiresPayment(course: { price: number; priceNpr: number }) {
-  return coursePaymentAmountPaisa(course) >= 1000;
+export function courseRequiresPayment(course: Priced) {
+  return coursePaymentAmountPaisa(course) > 0;
 }
 
 /** Display price for a course: what the student is actually charged, in NPR. */
-export function formatCoursePrice(course: { price: number; priceNpr: number }) {
+export function formatCoursePrice(course: Priced) {
   return courseRequiresPayment(course)
     ? formatNprFromPaisa(coursePaymentAmountPaisa(course))
     : "Free";

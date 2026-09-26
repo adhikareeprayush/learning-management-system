@@ -1,6 +1,13 @@
 import { prisma } from "@/lib/db";
-import { cleanString, finiteNumber, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
-import { findManagedCourse, syncCourseDuration } from "@/lib/course-access";
+import { finiteNumber, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import {
+  boundedText,
+  findManagedCourse,
+  readJsonObject,
+  recalculateCourseProgress,
+  syncCourseDuration,
+} from "@/lib/course-access";
+import { parseMediaUrl } from "@/lib/media-url";
 import { planReorder, reorderSteps } from "@/lib/reorder";
 
 type Params = { params: Promise<{ courseId: string }> };
@@ -44,12 +51,20 @@ export async function POST(request: Request, { params }: Params) {
     tenant.member,
   );
   if (!course) return jsonError("Course not found", 404);
-  const body = await request.json();
-  const title = cleanString(body.title, 200);
-  if (!title) return jsonError("title is required", 400);
-  if (body.moduleId) {
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+  const title = boundedText(body.title, "title", 200, { required: true });
+  if (!title.ok) return jsonError(title.error, 400);
+  const summary = boundedText(body.summary, "summary", 2_000);
+  if (!summary.ok) return jsonError(summary.error, 400);
+  const content = boundedText(body.content, "content", 100_000);
+  if (!content.ok) return jsonError(content.error, 400);
+  const videoUrl = parseMediaUrl(body.videoUrl, "video");
+  if (!videoUrl.ok) return jsonError(videoUrl.error, 400);
+  const moduleId = typeof body.moduleId === "string" && body.moduleId ? body.moduleId : null;
+  if (moduleId) {
     const courseModule = await prisma.module.findFirst({
-      where: { id: String(body.moduleId), courseId: course.id },
+      where: { id: moduleId, courseId: course.id },
     });
     if (!courseModule) return jsonError("Module not found in this course", 400);
   }
@@ -60,17 +75,18 @@ export async function POST(request: Request, { params }: Params) {
   const lesson = await prisma.lesson.create({
     data: {
       courseId: course.id,
-      moduleId: body.moduleId ? String(body.moduleId) : null,
-      title,
-      content: cleanString(body.content, 100_000) || null,
-      summary: cleanString(body.summary, 2_000) || null,
-      videoUrl: cleanString(body.videoUrl, 2_000) || null,
+      moduleId,
+      title: title.value,
+      content: content.value || null,
+      summary: summary.value || null,
+      videoUrl: videoUrl.url,
       duration: Math.max(0, Math.round(finiteNumber(body.duration))),
       isFree: Boolean(body.isFree),
       order: last._max.order === null ? 0 : last._max.order + 1,
     },
   });
   await syncCourseDuration(course.id);
+  await recalculateCourseProgress(course.id);
   return Response.json({ lesson }, { status: 201 });
 }
 

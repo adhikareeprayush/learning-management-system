@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useState, useSyncExternalStore } from "react";
 import { getInitials } from "@/components/dashboard/dashboard-user-context";
 
 const sizes = {
@@ -28,6 +28,17 @@ function markAvatarLoaded(src: string) {
   loadedAvatarUrls.add(src);
 }
 
+const noopSubscribe = () => () => {};
+
+/** False while hydrating (matching the server HTML), true for later client renders. */
+function useHydrated() {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
+}
+
 type UserAvatarProps = {
   name: string;
   image?: string | null;
@@ -45,11 +56,12 @@ function UserAvatarComponent({
   const initials = getInitials(name);
   const imageSrc = image?.trim() || null;
 
-  const [loadedSrc, setLoadedSrc] = useState<string | null>(() =>
-    imageSrc && isAvatarLoaded(imageSrc) ? imageSrc : null,
-  );
+  const hydrated = useHydrated();
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+  // The cache only applies after hydration; the server always renders the photo hidden.
   const showPhoto =
-    imageSrc !== null && (loadedSrc === imageSrc || isAvatarLoaded(imageSrc));
+    imageSrc !== null &&
+    (loadedSrc === imageSrc || (hydrated && isAvatarLoaded(imageSrc)));
 
   // An <img> that finished before hydration never fires onLoad, so probe with a
   // detached Image; its load event is always dispatched, even from cache.

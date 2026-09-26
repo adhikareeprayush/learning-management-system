@@ -61,6 +61,7 @@ export function OrganizationSettingsForm({
         name: data.organization.name,
         supportEmail: data.organization.supportEmail,
         contactPhone: data.organization.contactPhone,
+        address: data.organization.address,
         primaryColor: data.organization.primaryColor,
         logoUrl: data.organization.logoUrl,
       };
@@ -97,8 +98,8 @@ export function OrganizationSettingsForm({
         <div>
           <h2 className="text-base font-semibold text-brand-navy sm:text-lg">Institute profile</h2>
           <p className="text-sm text-muted">
-            The name appears across the public site. Contact and branding details are
-            saved to the institute record for use in emails and theming.
+            The name appears across the public site. Contact details show on the
+            contact page and in emails; branding is used for theming.
           </p>
         </div>
       </div>
@@ -155,6 +156,21 @@ export function OrganizationSettingsForm({
               className={inputClass}
             />
             {fieldError("contactPhone")}
+          </label>
+
+          <label className="block sm:col-span-2">
+            <span className="mb-1.5 block text-sm font-medium text-[#324361]">Address</span>
+            <input
+              value={values.address}
+              onChange={(event) => update("address", event.target.value)}
+              placeholder="Street, city (shown on the contact page)"
+              maxLength={300}
+              autoComplete="street-address"
+              aria-invalid={Boolean(fieldErrors.address)}
+              aria-describedby={fieldErrors.address ? "address-error" : undefined}
+              className={inputClass}
+            />
+            {fieldError("address")}
           </label>
 
           <div className="block">

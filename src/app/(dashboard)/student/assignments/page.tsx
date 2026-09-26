@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import {
@@ -6,10 +7,13 @@ import {
 } from "@/components/student/student-assignments-workspace";
 import { getServerSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { loginRedirectPath } from "@/lib/page-guards";
+
+export const metadata: Metadata = { title: "Assignments" };
 
 export default async function StudentAssignmentsPage() {
   const session = await getServerSession();
-  if (!session) redirect("/login");
+  if (!session) redirect(await loginRedirectPath());
 
   const rows = await prisma.assignment.findMany({
     where: {

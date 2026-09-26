@@ -9,25 +9,29 @@ import {
   courseCertificateContent,
   roadmapCertificateContent,
 } from "@/lib/certificate-design";
+import { formatDate, pluralize } from "@/lib/format";
 
-type CourseCertificateItem = {
-  kind: "course";
+type CertificateBase = {
   id: string;
   credentialId: string;
   issuedAt: string;
+  /** Name as issued (snapshot), not the account's current name. */
+  holderName: string;
+  verifyUrl: string;
+};
+
+type CourseCertificateItem = CertificateBase & {
+  kind: "course";
   course: {
     title: string;
     slug: string;
     category?: string | null;
-    instructor: { name: string };
+    instructorName: string;
   };
 };
 
-type RoadmapCertificateItem = {
+type RoadmapCertificateItem = CertificateBase & {
   kind: "roadmap";
-  id: string;
-  credentialId: string;
-  issuedAt: string;
   roadmap: {
     title: string;
     slug: string;
@@ -38,17 +42,18 @@ type RoadmapCertificateItem = {
 
 type CertificateItem = CourseCertificateItem | RoadmapCertificateItem;
 
-function certificateContent(cert: CertificateItem, studentName: string) {
+function certificateContent(cert: CertificateItem) {
   const shared = {
-    studentName,
+    studentName: cert.holderName,
     credentialId: cert.credentialId,
     issuedAt: cert.issuedAt,
+    verifyUrl: cert.verifyUrl,
   };
   return cert.kind === "course"
     ? courseCertificateContent({
         ...shared,
         courseTitle: cert.course.title,
-        instructorName: cert.course.instructor.name,
+        instructorName: cert.course.instructorName,
         category: cert.course.category,
       })
     : roadmapCertificateContent({
@@ -142,10 +147,8 @@ async function downloadFromPreview(root: HTMLElement, filename: string) {
 }
 
 export function CertificatesWorkspace({
-  studentName,
   certificates,
 }: {
-  studentName: string;
   certificates: CertificateItem[];
 }) {
   const [flash, setFlash] = useState<string | null>(null);
@@ -213,9 +216,9 @@ export function CertificatesWorkspace({
             >
               <CertificatePreview
                 data-certificate-id={cert.id}
-                content={certificateContent(cert, studentName)}
+                content={certificateContent(cert)}
               />
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-black/5 px-4 py-3 sm:px-5">
+              <div className="flex flex-col gap-3 border-t border-black/5 px-4 py-3 sm:px-5">
                 <div className="min-w-0">
                   <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-[#324361]">
                     {cert.kind === "roadmap" ? (
@@ -229,14 +232,10 @@ export function CertificatesWorkspace({
                   </p>
                   <p className="text-xs text-muted">
                     {cert.kind === "roadmap"
-                      ? `Path certificate · ${cert.roadmap.courseCount} courses`
-                      : cert.course.instructor.name}{" "}
+                      ? `Path certificate · ${pluralize(cert.roadmap.courseCount, "course")}`
+                      : cert.course.instructorName}{" "}
                     ·{" "}
-                    {new Date(cert.issuedAt).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}{" "}
+                    {formatDate(cert.issuedAt)}{" "}
                     ·{" "}
                     <a
                       href={`/verify/${encodeURIComponent(cert.credentialId)}`}

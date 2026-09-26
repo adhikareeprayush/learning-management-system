@@ -4,6 +4,7 @@ import {
   generateRoadmapCertificatePdf,
   roadmapCertificatePdfFilename,
 } from "@/lib/certificate-pdf";
+import { certificateVerifyUrl } from "@/lib/certificates";
 
 type Params = { params: Promise<{ certificateId: string }> };
 
@@ -41,16 +42,19 @@ export async function GET(request: Request, { params }: Params) {
 
   if (!certificate) return jsonError("Certificate not found", 404);
 
+  // Issued snapshot first; live values only for rows that predate snapshots.
+  const roadmapTitle = certificate.roadmapTitle ?? certificate.roadmap.title;
   const pdfBytes = await generateRoadmapCertificatePdf({
-    studentName: certificate.student.name,
-    roadmapTitle: certificate.roadmap.title,
-    courseCount: certificate.roadmap.courses.length,
+    studentName: certificate.holderName ?? certificate.student.name,
+    roadmapTitle,
+    courseCount: certificate.courseCount ?? certificate.roadmap.courses.length,
     category: certificate.roadmap.category,
     credentialId: certificate.credentialId,
     issuedAt: certificate.issuedAt,
+    verifyUrl: certificateVerifyUrl(certificate.credentialId),
   });
 
-  const filename = roadmapCertificatePdfFilename(certificate.roadmap.title);
+  const filename = roadmapCertificatePdfFilename(roadmapTitle);
 
   const disposition =
     new URL(request.url).searchParams.get("inline") === "1"

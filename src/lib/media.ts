@@ -1,5 +1,8 @@
-import { errorMessage, safeFileName } from "@/lib/api";
+import { createHmac, randomUUID } from "node:crypto";
+import { errorMessage } from "@/lib/api";
+import { getImagekitEndpoint } from "@/lib/imagekit-url";
 import { isLocalUploadEnabled, uploadToLocalDisk } from "@/lib/local-upload";
+import { storedFileName, type DetectedFileType } from "@/lib/upload-client";
 
 export { isLocalUploadEnabled };
 
@@ -15,6 +18,36 @@ export function isImageKitConfigured() {
   return Boolean(process.env.IMAGEKIT_PRIVATE_KEY?.trim());
 }
 
+/** Browser uploads go straight to ImageKit; they also need the public key and URL endpoint. */
+export function isImageKitDirectUploadConfigured() {
+  return Boolean(
+    isImageKitConfigured() && process.env.IMAGEKIT_PUBLIC_KEY?.trim() && getImagekitEndpoint(),
+  );
+}
+
+export const IMAGEKIT_UPLOAD_URL = "https://upload.imagekit.io/api/v1/files/upload";
+
+/** Upload size limit for ImageKit and local uploads, in bytes. */
+export function maxUploadBytes() {
+  const mb = Number(process.env.IMAGEKIT_MAX_UPLOAD_MB);
+  return (Number.isFinite(mb) && mb > 0 ? mb : 25) * 1024 * 1024;
+}
+
+/**
+ * One-time client-upload credentials: signature = HMAC-SHA1(privateKey, token + expire),
+ * hex (same as the official SDK's getAuthenticationParameters). ImageKit rejects a
+ * reused token and requires `expire` less than an hour ahead.
+ */
+export function createImageKitUploadAuth(ttlSeconds = 30 * 60) {
+  const privateKey = process.env.IMAGEKIT_PRIVATE_KEY?.trim();
+  const publicKey = process.env.IMAGEKIT_PUBLIC_KEY?.trim();
+  if (!privateKey || !publicKey) throw new Error("ImageKit keys are not configured");
+  const token = randomUUID();
+  const expire = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const signature = createHmac("sha1", privateKey).update(token + expire).digest("hex");
+  return { token, expire, signature, publicKey };
+}
+
 export function isYouTubeConfigured() {
   return Boolean(
     process.env.YOUTUBE_CLIENT_ID?.trim() &&
@@ -23,12 +56,17 @@ export function isYouTubeConfigured() {
   );
 }
 
-export async function uploadMediaFile(file: File, folder: string): Promise<UploadResult> {
+/** `type` is what detectFileType() found in the bytes; it decides the stored extension. */
+export async function uploadMediaFile(
+  file: File,
+  folder: string,
+  type: DetectedFileType,
+): Promise<UploadResult> {
   if (isImageKitConfigured()) {
-    return uploadToImageKit(file, folder);
+    return uploadToImageKit(file, folder, type);
   }
   if (isLocalUploadEnabled()) {
-    return uploadToLocalDisk(file, folder);
+    return uploadToLocalDisk(file, folder, type);
   }
   throw new Error(
     "IMAGEKIT_PRIVATE_KEY is not configured. Add ImageKit keys to .env or see README.",
@@ -68,12 +106,17 @@ async function parseProviderError(response: Response) {
   }
 }
 
-export async function uploadToImageKit(file: File, folder: string): Promise<UploadResult> {
+export async function uploadToImageKit(
+  file: File,
+  folder: string,
+  type: DetectedFileType,
+): Promise<UploadResult> {
   const privateKey = process.env.IMAGEKIT_PRIVATE_KEY;
   if (!privateKey) throw new Error("IMAGEKIT_PRIVATE_KEY is not configured");
+  const fileName = storedFileName(file.name, type);
   const form = new FormData();
-  form.set("file", file);
-  form.set("fileName", safeFileName(file.name));
+  form.set("file", new File([file], fileName, { type: type.mime }));
+  form.set("fileName", fileName);
   form.set("folder", folder);
   form.set("useUniqueFileName", "true");
   const response = await fetch("https://upload.imagekit.io/api/v1/files/upload", {

@@ -5,6 +5,7 @@ import {
   CERTIFICATE_LAYOUT as L,
   CERTIFICATE_SEAL_TEXT,
   LOGO_MARK,
+  verifyUrlLabel,
   type CertificateContent,
 } from "@/lib/certificate-design";
 import {
@@ -340,6 +341,22 @@ export function CertificatePreview({
           >
             {content.credentialId}
           </span>
+        </p>
+        <p
+          className="absolute inset-x-0 text-center"
+          style={{
+            top: u(L.verifyBaseline - L.verifySize * 0.9),
+            fontFamily: CERTIFICATE_FONTS.ui,
+            fontWeight: 500,
+            fontSize: u(L.verifySize),
+            letterSpacing: u(0.3),
+            lineHeight: 1,
+            whiteSpace: "nowrap",
+            color: CERTIFICATE.muted,
+          }}
+        >
+          Verify at{" "}
+          <span style={{ color: CERTIFICATE.teal }}>{verifyUrlLabel(content.verifyUrl)}</span>
         </p>
       </div>
     </div>

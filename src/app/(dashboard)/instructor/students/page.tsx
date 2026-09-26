@@ -1,9 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Users } from "lucide-react";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { ProgressBar } from "@/components/dashboard/progress-bar";
 import { UserAvatar } from "@/components/ui/user-avatar";
 import { prisma } from "@/lib/db";
+import { pluralize } from "@/lib/format";
 import { requireInstructorPage } from "@/lib/page-guards";
 
 const enrollmentDateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -21,6 +23,8 @@ function normalizeProgress(progress: number) {
   return Math.round(Math.max(0, Math.min(100, progress)));
 }
 
+export const metadata: Metadata = { title: "Students" };
+
 export default async function InstructorStudentsPage() {
   const session = await requireInstructorPage();
 
@@ -31,7 +35,9 @@ export default async function InstructorStudentsPage() {
       id: true,
       enrolledAt: true,
       progress: true,
-      student: { select: { id: true, name: true, email: true, image: true } },
+      student: {
+        select: { id: true, name: true, email: true, image: true, deletedAt: true },
+      },
       course: { select: { title: true, slug: true } },
     },
   });
@@ -56,7 +62,8 @@ export default async function InstructorStudentsPage() {
           <strong className="text-brand-navy">{studentCount}</strong>{" "}
           {studentCount === 1 ? "student" : "students"} across{" "}
           <strong className="text-brand-navy">{courseCount}</strong>{" "}
-          {courseCount === 1 ? "course" : "courses"}
+          {courseCount === 1 ? "course" : "courses"} ·{" "}
+          {pluralize(enrollments.length, "enrollment")}
         </span>
       </div>
 
@@ -94,9 +101,11 @@ export default async function InstructorStudentsPage() {
                       <p className="font-medium text-[#324361]">
                         {enrollment.student.name}
                       </p>
-                      <p className="truncate text-xs text-muted">
-                        {enrollment.student.email}
-                      </p>
+                      {enrollment.student.deletedAt ? null : (
+                        <p className="truncate text-xs text-muted">
+                          {enrollment.student.email}
+                        </p>
+                      )}
                       <Link
                         href={`/instructor/courses/${enrollment.course.slug}/students`}
                         className="mt-2 inline-block text-sm font-medium text-brand-purple transition hover:text-brand-navy"
@@ -152,9 +161,11 @@ export default async function InstructorStudentsPage() {
                             <p className="font-medium text-[#324361]">
                               {enrollment.student.name}
                             </p>
-                            <p className="truncate text-xs text-muted">
-                              {enrollment.student.email}
-                            </p>
+                            {enrollment.student.deletedAt ? null : (
+                              <p className="truncate text-xs text-muted">
+                                {enrollment.student.email}
+                              </p>
+                            )}
                           </div>
                         </div>
                       </td>

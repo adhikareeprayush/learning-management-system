@@ -1,7 +1,10 @@
+import type { Metadata } from "next";
 import { RoadmapForm } from "@/components/admin/roadmap-form";
 import { requireAdminPage } from "@/lib/page-guards";
 import { listRoadmapCourseOptions } from "@/lib/roadmap-admin";
 import { requireTenantContext } from "@/lib/tenant";
+
+export const metadata: Metadata = { title: "New roadmap" };
 
 export default async function NewRoadmapPage() {
   await requireAdminPage();

@@ -1,18 +1,21 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { listAdminPayments } from "@/lib/dashboard-data";
 import { prisma } from "@/lib/db";
-import { requireAdminPage } from "@/lib/page-guards";
+import { loginRedirectPath, requireAdminPage } from "@/lib/page-guards";
 import { listAllPaymentMethods } from "@/lib/payment-methods";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 import AdminPaymentsClient from "./payments-client";
 
 const PENDING_LIMIT = 100;
 
+export const metadata: Metadata = { title: "Payments" };
+
 export default async function AdminPaymentsPage() {
   await requireAdminPage();
 
   const ctx = await resolveTenantFromHeaders();
-  if (!ctx) redirect("/login");
+  if (!ctx) redirect(await loginRedirectPath());
 
   const [methods, pending, pendingTotal, history] = await Promise.all([
     listAllPaymentMethods(ctx.organizationId),

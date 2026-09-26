@@ -16,9 +16,10 @@ const ReactPlayer = dynamic(() => import("react-player"), {
 type VideoPlayerProps = {
   url: string;
   title?: string;
+  onEnded?: () => void;
 };
 
-export function VideoPlayer({ url, title }: VideoPlayerProps) {
+export function VideoPlayer({ url, title, onEnded }: VideoPlayerProps) {
   return (
     <div className="overflow-hidden rounded-2xl border border-black/5 bg-black shadow-[0_1px_2px_rgba(16,24,40,0.06)]">
       <div className="relative aspect-video w-full [&_iframe]:absolute [&_iframe]:inset-0 [&_iframe]:size-full [&_video]:absolute [&_video]:inset-0 [&_video]:size-full">
@@ -28,6 +29,7 @@ export function VideoPlayer({ url, title }: VideoPlayerProps) {
           height="100%"
           controls
           playsInline
+          onEnded={onEnded}
           style={{ position: "absolute", inset: 0 }}
           config={{
             youtube: {

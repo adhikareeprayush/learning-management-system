@@ -22,7 +22,7 @@ import { UserAvatar } from "@/components/ui/user-avatar";
 import { prisma } from "@/lib/db";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { parseQuizPayload } from "@/lib/lesson-resources";
-import { requireAdminPage } from "@/lib/page-guards";
+import { loginRedirectPath, requireAdminPage } from "@/lib/page-guards";
 import { formatCoursePrice } from "@/lib/pricing";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 import { CourseReviewActions } from "./course-review-actions";
@@ -90,7 +90,7 @@ export default async function AdminCoursePreviewPage({ params }: Props) {
   await requireAdminPage();
 
   const ctx = await resolveTenantFromHeaders();
-  if (!ctx) redirect("/login");
+  if (!ctx) redirect(await loginRedirectPath());
 
   const { courseId } = await params;
   const course = await prisma.course.findFirst({
@@ -99,7 +99,7 @@ export default async function AdminCoursePreviewPage({ params }: Props) {
       OR: [{ id: courseId }, { slug: courseId }],
     },
     include: {
-      instructor: { select: { id: true, name: true, email: true, image: true } },
+      instructor: { select: { id: true, name: true, email: true, image: true, deletedAt: true } },
       modules: {
         orderBy: { order: "asc" },
         include: { lessons: lessonInclude },
@@ -376,7 +376,10 @@ export default async function AdminCoursePreviewPage({ params }: Props) {
         </div>
 
         <aside className="space-y-4 lg:space-y-5">
-          <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
+          <section
+            id="moderation"
+            className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5"
+          >
             <h2 className="text-base font-semibold text-brand-navy">Moderation</h2>
             <p className="mt-1 text-sm text-muted">
               Status:{" "}
@@ -384,11 +387,24 @@ export default async function AdminCoursePreviewPage({ params }: Props) {
                 {statusLabels[course.status]}
               </span>
             </p>
+            {course.reviewNote || course.reviewedAt ? (
+              <div className="mt-3 rounded-xl border border-black/5 bg-surface/70 px-3 py-2.5 text-sm">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  Last review{course.reviewedAt ? ` · ${dateFormatter.format(course.reviewedAt)}` : ""}
+                </p>
+                {course.reviewNote ? (
+                  <p className="mt-1 whitespace-pre-line text-[#324361]">{course.reviewNote}</p>
+                ) : (
+                  <p className="mt-1 text-muted">No note was left.</p>
+                )}
+              </div>
+            ) : null}
             <div className="mt-4">
               <CourseReviewActions
                 courseId={course.id}
                 status={course.status}
                 missing={missing}
+                featured={course.featured}
               />
             </div>
             {course.status === "PUBLISHED" ? (
@@ -424,7 +440,9 @@ export default async function AdminCoursePreviewPage({ params }: Props) {
           <section className="rounded-2xl border border-black/5 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
             <h2 className="text-base font-semibold text-brand-navy">Instructor</h2>
             <Link
-              href={`/admin/users?q=${encodeURIComponent(course.instructor.email)}`}
+              href={`/admin/users?q=${encodeURIComponent(course.instructor.email)}${
+                course.instructor.deletedAt ? "&status=deleted" : ""
+              }`}
               className="mt-3 flex items-center gap-3 rounded-xl border border-black/5 p-3 transition hover:border-brand-purple/25 hover:bg-surface/70"
             >
               <UserAvatar name={course.instructor.name} image={course.instructor.image} size="sm" />

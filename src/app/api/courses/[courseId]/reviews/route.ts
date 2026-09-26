@@ -11,7 +11,9 @@ import {
   requireSession,
   requireTenantApi,
 } from "@/lib/api";
+import { readJsonObject } from "@/lib/course-access";
 import { resolveLearnerMember } from "@/lib/membership";
+import { isOrgAdmin } from "@/lib/tenant";
 
 type Params = { params: Promise<{ courseId: string }> };
 
@@ -97,7 +99,8 @@ export async function POST(request: Request, { params }: Params) {
     );
   }
 
-  const body = await request.json().catch(() => ({}));
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
   const rating = Math.round(finiteNumber(body.rating));
   if (rating < 1 || rating > 5) {
     return jsonError("Rating must be between 1 and 5", 400);
@@ -143,12 +146,37 @@ export async function POST(request: Request, { params }: Params) {
   );
 }
 
-export async function DELETE(_request: Request, { params }: Params) {
+/**
+ * Students delete their own review. Org admins can delete any review in the
+ * course with ?reviewId= (moderation), whatever the course status.
+ */
+export async function DELETE(request: Request, { params }: Params) {
   const tenant = await requireTenantApi();
   if (tenant instanceof Response) return tenant;
 
   const session = await requireSession();
   if (!session) return jsonError("Unauthorized", 401);
+
+  const { courseId } = await params;
+  const reviewId = new URL(request.url).searchParams.get("reviewId")?.trim().slice(0, 80);
+
+  if (reviewId) {
+    if (session.user.role !== "ADMIN" && !isOrgAdmin(tenant.member)) {
+      return jsonError("Admin access required", 403);
+    }
+    const { count } = await prisma.review.deleteMany({
+      where: {
+        id: reviewId,
+        course: {
+          organizationId: tenant.organizationId,
+          OR: [{ id: courseId }, { slug: courseId }],
+        },
+      },
+    });
+    if (count === 0) return jsonError("Review not found", 404);
+    return Response.json({ ok: true, deletedId: reviewId });
+  }
+
   const learner = await resolveLearnerMember(
     tenant.organizationId,
     session.user,
@@ -158,7 +186,6 @@ export async function DELETE(_request: Request, { params }: Params) {
     return jsonError("Forbidden", 403);
   }
 
-  const { courseId } = await params;
   const course = await resolvePublishedCourse(courseId, tenant.organizationId);
   if (!course) return jsonError("Course not found", 404);
 

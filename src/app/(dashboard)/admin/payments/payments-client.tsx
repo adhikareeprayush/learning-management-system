@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   CheckCircle2,
   CreditCard,
   ExternalLink,
   Plus,
   QrCode,
+  RotateCcw,
   Trash2,
   X,
   XCircle,
@@ -17,6 +18,7 @@ import { FlashBanner } from "@/components/ui/flash-banner";
 import type { AdminPaymentRow } from "@/lib/dashboard-data";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
 import { formatNprFromPaisa } from "@/lib/pricing";
+import { uploadFile } from "@/lib/upload-client";
 
 type PaymentMethodRow = {
   id: string;
@@ -41,12 +43,13 @@ const dateFormatter = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
 });
 
-const statusLabels: Record<string, string> = {
-  COMPLETED: "Approved",
-  FAILED: "Rejected",
-  PENDING: "Pending",
-  CANCELED: "Canceled",
-  EXPIRED: "Expired",
+const statusMeta: Record<PaymentRow["status"], { label: string; className: string }> = {
+  COMPLETED: { label: "Approved", className: "bg-green-50 text-green-700" },
+  FAILED: { label: "Rejected", className: "bg-red-50 text-red-700" },
+  PENDING: { label: "Pending", className: "bg-amber-50 text-amber-700" },
+  CANCELED: { label: "Canceled", className: "bg-slate-100 text-slate-600" },
+  EXPIRED: { label: "Expired", className: "bg-slate-100 text-slate-600" },
+  REFUNDED: { label: "Refunded", className: "bg-violet-50 text-violet-800" },
 };
 
 const emptyMethodForm = {
@@ -95,6 +98,8 @@ export default function AdminPaymentsClient({
   const [error, setError] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [refundingId, setRefundingId] = useState<string | null>(null);
+  const [refundReason, setRefundReason] = useState("");
 
   const pendingCount = pending.length + pendingHidden;
 
@@ -125,17 +130,8 @@ export default function AdminPaymentsClient({
   }
 
   async function uploadQr(file: File) {
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("provider", "imagekit");
-    formData.append("purpose", "payment-qr");
-    const res = await fetch("/api/upload", { method: "POST", body: formData });
-    if (!res.ok) throw new Error(await responseError(res));
-    const data = (await res.json()) as { upload?: { url?: unknown } };
-    if (typeof data.upload?.url !== "string") {
-      throw new Error("Upload succeeded but no URL was returned");
-    }
-    setForm((prev) => ({ ...prev, qrImageUrl: data.upload!.url as string }));
+    const { url } = await uploadFile(file, "payment-qr");
+    setForm((prev) => ({ ...prev, qrImageUrl: url }));
   }
 
   async function saveMethod(event: React.FormEvent) {
@@ -247,6 +243,39 @@ export default function AdminPaymentsClient({
       } else {
         setError(err instanceof Error ? err.message : "Review failed");
       }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function refundPayment(payment: PaymentRow) {
+    setBusyId(payment.id);
+    setError(null);
+    setFlash(null);
+
+    try {
+      const res = await fetch("/api/admin/payments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          paymentId: payment.id,
+          action: "refund",
+          reason: refundReason.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(await responseError(res));
+      const data = (await res.json()) as { payment: PaymentRow | null };
+      if (data.payment) {
+        const refunded = data.payment;
+        setRecent((prev) => prev.map((p) => (p.id === payment.id ? refunded : p)));
+      }
+      setRefundingId(null);
+      setRefundReason("");
+      setFlash(
+        `Payment marked as refunded and ${payment.user.name} was removed from ${payment.course.title}.`,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Refund failed");
     } finally {
       setBusyId(null);
     }
@@ -539,9 +568,20 @@ export default function AdminPaymentsClient({
             </p>
           ) : null}
           {pending.length === 0 ? (
-            <p className="rounded-2xl border border-black/5 bg-white p-6 text-sm text-muted">
-              No pending payment submissions.
-            </p>
+            <div className="rounded-2xl border border-dashed border-black/10 bg-white px-6 py-14 text-center">
+              <CheckCircle2 className="mx-auto size-10 text-brand-teal/60" />
+              <p className="mt-4 font-semibold text-brand-navy">All caught up</p>
+              <p className="mt-1 text-sm text-muted">
+                No payment screenshots are waiting for review. New submissions appear here.
+              </p>
+              <button
+                type="button"
+                onClick={() => setTab("history")}
+                className="mt-4 inline-flex rounded-xl border border-black/10 bg-white px-4 py-2 text-sm font-semibold text-brand-navy transition hover:bg-surface"
+              >
+                View history
+              </button>
+            </div>
           ) : (
             pending.map((payment) => (
               <div
@@ -555,7 +595,8 @@ export default function AdminPaymentsClient({
                     </p>
                     <h3 className="mt-1 font-semibold text-brand-navy">{payment.course.title}</h3>
                     <p className="text-sm text-muted">
-                      {payment.user.name} · {payment.user.email}
+                      {payment.user.name}
+                      {payment.user.email ? ` · ${payment.user.email}` : ""}
                     </p>
                     <p className="mt-2 text-sm font-semibold text-brand-teal">
                       {formatNprFromPaisa(payment.amount)}
@@ -652,6 +693,7 @@ export default function AdminPaymentsClient({
                   <th className="px-4 py-3">Student</th>
                   <th className="px-4 py-3">Course</th>
                   <th className="px-4 py-3">Amount</th>
+                  <th className="px-4 py-3">Proof</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Reviewed</th>
                 </tr>
@@ -659,60 +701,147 @@ export default function AdminPaymentsClient({
               <tbody className="divide-y divide-black/5">
                 {recent.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-10 text-center text-muted">
+                    <td colSpan={7} className="px-4 py-10 text-center text-muted">
                       No reviewed payments yet.
                     </td>
                   </tr>
                 ) : null}
                 {recent.map((payment) => (
-                  <tr key={payment.id} className="align-top">
-                    <td className="whitespace-nowrap px-4 py-3 text-muted">
-                      {dateFormatter.format(new Date(payment.createdAt))}
-                    </td>
-                    <td className="px-4 py-3">
-                      <p className="text-[#324361]">{payment.user.name}</p>
-                      <p className="text-xs text-muted">{payment.user.email}</p>
-                    </td>
-                    <td className="px-4 py-3 text-[#324361]">{payment.course.title}</td>
-                    <td className="whitespace-nowrap px-4 py-3">
-                      {formatNprFromPaisa(payment.amount)}
-                      {payment.paymentMethod ? (
-                        <p className="text-xs text-muted">{payment.paymentMethod.label}</p>
-                      ) : null}
-                    </td>
-                    <td className="max-w-[260px] px-4 py-3">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                          payment.status === "COMPLETED"
-                            ? "bg-green-50 text-green-700"
-                            : payment.status === "PENDING"
-                              ? "bg-amber-50 text-amber-700"
-                              : "bg-red-50 text-red-700"
-                        }`}
-                      >
-                        {statusLabels[payment.status] ?? payment.status}
-                      </span>
-                      {payment.status === "FAILED" && payment.rejectionReason ? (
-                        <p className="mt-1.5 text-xs text-red-700">
-                          Reason: {payment.rejectionReason}
-                        </p>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-3 text-muted">
-                      {payment.reviewedAt ? (
-                        <>
-                          <p className="text-[#324361]">
-                            {payment.reviewedBy?.name ?? "Unknown admin"}
+                  <Fragment key={payment.id}>
+                    <tr className="align-top">
+                      <td className="whitespace-nowrap px-4 py-3 text-muted">
+                        {dateFormatter.format(new Date(payment.createdAt))}
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="text-[#324361]">{payment.user.name}</p>
+                        {payment.user.email ? (
+                          <p className="text-xs text-muted">{payment.user.email}</p>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3 text-[#324361]">{payment.course.title}</td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        {formatNprFromPaisa(payment.amount)}
+                        {payment.paymentMethod ? (
+                          <p className="text-xs text-muted">{payment.paymentMethod.label}</p>
+                        ) : null}
+                      </td>
+                      <td className="max-w-[220px] px-4 py-3 text-xs">
+                        {payment.screenshotUrl ? (
+                          <a
+                            href={payment.screenshotUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 font-semibold text-brand-purple hover:text-brand-teal"
+                          >
+                            Screenshot <ExternalLink className="size-3" />
+                          </a>
+                        ) : (
+                          <span className="text-muted">No screenshot</span>
+                        )}
+                        {payment.referenceNote ? (
+                          <p className="mt-1 break-words text-[#324361]">Ref: {payment.referenceNote}</p>
+                        ) : null}
+                        {payment.transactionId ? (
+                          <p className="mt-1 break-all font-mono text-[#324361]">
+                            Txn: {payment.transactionId}
                           </p>
-                          <p className="whitespace-nowrap text-xs">
-                            {dateFormatter.format(new Date(payment.reviewedAt))}
+                        ) : null}
+                      </td>
+                      <td className="max-w-[260px] px-4 py-3">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusMeta[payment.status].className}`}
+                        >
+                          {statusMeta[payment.status].label}
+                        </span>
+                        {payment.status === "FAILED" && payment.rejectionReason ? (
+                          <p className="mt-1.5 text-xs text-red-700">
+                            Reason: {payment.rejectionReason}
                           </p>
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                  </tr>
+                        ) : null}
+                        {payment.status === "REFUNDED" ? (
+                          <p className="mt-1.5 text-xs text-muted">
+                            {payment.refund?.byName ? `By ${payment.refund.byName}` : "Refunded"}
+                            {payment.refund?.at
+                              ? ` · ${dateFormatter.format(new Date(payment.refund.at))}`
+                              : ""}
+                            {payment.rejectionReason ? (
+                              <span className="block text-[#324361]">Note: {payment.rejectionReason}</span>
+                            ) : null}
+                          </p>
+                        ) : null}
+                        {payment.status === "COMPLETED" && refundingId !== payment.id ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRefundingId(payment.id);
+                              setRefundReason("");
+                            }}
+                            disabled={busyId !== null}
+                            className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-red-700 hover:text-red-800 disabled:opacity-50"
+                          >
+                            <RotateCcw className="size-3" />
+                            Refund
+                          </button>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3 text-muted">
+                        {payment.reviewedAt ? (
+                          <>
+                            <p className="text-[#324361]">
+                              {payment.reviewedBy?.name ?? "Unknown admin"}
+                            </p>
+                            <p className="whitespace-nowrap text-xs">
+                              {dateFormatter.format(new Date(payment.reviewedAt))}
+                            </p>
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                    {refundingId === payment.id ? (
+                      <tr>
+                        <td colSpan={7} className="bg-amber-50/60 px-4 py-3">
+                          <p className="text-sm text-amber-900">
+                            Mark this {formatNprFromPaisa(payment.amount)} payment as refunded? This
+                            removes {payment.user.name}&apos;s access to {payment.course.title} (their
+                            lesson progress is kept). Send the money back through{" "}
+                            {payment.paymentMethod?.label ?? "the original method"} yourself; this only
+                            records it.
+                          </p>
+                          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <input
+                              value={refundReason}
+                              onChange={(e) => setRefundReason(e.target.value)}
+                              maxLength={500}
+                              placeholder="Note for the student (optional)"
+                              className="w-full rounded-xl border border-black/10 bg-white px-3 py-2 text-sm sm:max-w-md"
+                            />
+                            <div className="flex gap-2">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                disabled={busyId === payment.id}
+                                onClick={() => {
+                                  setRefundingId(null);
+                                  setRefundReason("");
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                              <Button
+                                type="button"
+                                onClick={() => void refundPayment(payment)}
+                                loading={busyId === payment.id}
+                              >
+                                Confirm refund
+                              </Button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

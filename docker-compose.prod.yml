@@ -1,5 +1,9 @@
-# Production: Postgres + Next.js built from Dockerfile
-# Usage: docker compose -f docker-compose.prod.yml up -d --build
+# Production: Postgres + the app image built from the Dockerfile.
+# Usage: fill in .env (see .env.example), then
+#   docker compose -f docker-compose.prod.yml up -d --build
+# First admin: set ADMIN_EMAIL / ADMIN_PASSWORD / ADMIN_NAME in .env for the
+# first start (the entrypoint creates the account), then remove ADMIN_PASSWORD.
+# Put a TLS-terminating reverse proxy in front of 127.0.0.1:3005.
 
 services:
   db:
@@ -21,8 +25,16 @@ services:
   web:
     build:
       context: .
-      dockerfile: Dockerfile
+      # Public values are compiled into the client bundle and CSP; changing
+      # them needs a rebuild (--build).
+      args:
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?Set NEXT_PUBLIC_APP_URL in .env}
+        NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT: ${NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT:-}
+        IMAGEKIT_URL_ENDPOINT: ${IMAGEKIT_URL_ENDPOINT:-}
+        NEXT_PUBLIC_DEMO_MODE: ${NEXT_PUBLIC_DEMO_MODE:-false}
+    image: lms-web:latest
     container_name: lms-web
+    init: true
     restart: unless-stopped
     depends_on:
       db:
@@ -33,9 +45,9 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/lms
-      HOSTNAME: 0.0.0.0
-      PORT: "3005"
+      DIRECT_URL: ""
       NODE_ENV: production
+      PORT: "3005"
 
 volumes:
   lms_pgdata:

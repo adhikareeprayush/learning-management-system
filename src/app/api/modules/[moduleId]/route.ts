@@ -1,7 +1,13 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { cleanString, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
-import { findManagedCourse, syncCourseDuration } from "@/lib/course-access";
+import { isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import {
+  boundedText,
+  findManagedCourse,
+  readJsonObject,
+  recalculateCourseProgress,
+  syncCourseDuration,
+} from "@/lib/course-access";
 
 type Params = { params: Promise<{ moduleId: string }> };
 
@@ -27,19 +33,21 @@ export async function PATCH(request: Request, { params }: Params) {
     return jsonError("Module not found", 404);
   }
 
-  const body = await request.json();
-  if (body.title !== undefined && !cleanString(body.title, 160)) {
-    return jsonError("title is required", 400);
-  }
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+  const title = boundedText(body.title, "title", 160, { required: body.title !== undefined });
+  if (!title.ok) return jsonError(title.error, 400);
+  const description = boundedText(body.description, "description", 2_000);
+  if (!description.ok) return jsonError(description.error, 400);
   try {
     const courseModule = await prisma.module.update({
       where: { id: moduleId },
       data: {
-        ...(body.title !== undefined ? { title: cleanString(body.title, 160) } : {}),
+        ...(body.title !== undefined ? { title: title.value } : {}),
         ...(body.description !== undefined
-          ? { description: cleanString(body.description) || null }
+          ? { description: description.value || null }
           : {}),
-        ...(Number.isInteger(body.order) && body.order >= 0
+        ...(typeof body.order === "number" && Number.isInteger(body.order) && body.order >= 0
           ? { order: body.order }
           : {}),
       },
@@ -77,7 +85,9 @@ export async function DELETE(_request: Request, { params }: Params) {
   ) {
     return jsonError("Module not found", 404);
   }
+  // Its lessons stay in the course (moduleId is set to null), so no progress is lost.
   await prisma.module.delete({ where: { id: moduleId } });
   await syncCourseDuration(existing.courseId);
+  await recalculateCourseProgress(existing.courseId);
   return new Response(null, { status: 204 });
 }

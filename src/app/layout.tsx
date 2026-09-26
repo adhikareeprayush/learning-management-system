@@ -1,13 +1,32 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import { appUrl } from "@/lib/app-url";
+import { getInstituteProfile } from "@/lib/institute";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: {
-    default: "Convolution LMS — Learning platform",
-    template: "%s · Convolution LMS",
-  },
-  description:
-    "Convolution LMS: courses, roadmaps, certificates, manual payment enrollment, and admin newsletter tools.",
+export async function generateMetadata(): Promise<Metadata> {
+  const { name } = await getInstituteProfile();
+
+  return {
+    metadataBase: new URL(appUrl()),
+    applicationName: name,
+    title: {
+      default: `${name} — Online courses and certificates`,
+      template: `%s · ${name}`,
+    },
+    description: `Learn with ${name}: self-paced courses, structured learning paths, and certificates anyone can verify online.`,
+    // No title/description here: Next fills og/twitter text from each page's
+    // own title and description. The image comes from app/opengraph-image.tsx.
+    openGraph: {
+      type: "website",
+      siteName: name,
+      locale: "en_US",
+    },
+    twitter: { card: "summary_large_image" },
+  };
+}
+
+export const viewport: Viewport = {
+  themeColor: "#04016C",
 };
 
 export default function RootLayout({

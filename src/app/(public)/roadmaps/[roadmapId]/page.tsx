@@ -8,37 +8,61 @@ import {
   Circle,
   Map as MapIcon,
 } from "lucide-react";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import { EnrollButton } from "@/components/course/enroll-button";
 import { RoadmapEnrollButton } from "@/components/course/roadmap-enroll-button";
 import { Button } from "@/components/ui/button";
 import { getServerSession } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { formatLevel, getRoadmapDetail } from "@/lib/roadmaps";
+import { formatDuration, formatLevel, pluralize } from "@/lib/format";
+import { getRoadmapDetail } from "@/lib/roadmaps";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 import { courseRequiresPayment, formatCoursePrice } from "@/lib/pricing";
 import { resolveMediaUrl } from "@/lib/imagekit-url";
+import { shareImageMetadata } from "@/lib/institute";
 
-function formatDuration(minutes: number) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h <= 0) return `${m}m`;
-  return `${h}h ${m.toString().padStart(2, "0")}m`;
-}
-
-type Props = { params: Promise<{ roadmapId: string }> };
-
-export default async function RoadmapDetailPage({ params }: Props) {
-  const tenant = await resolveTenantFromHeaders();
-  if (!tenant) notFound();
-
-  const { roadmapId } = await params;
-  const session = await getServerSession();
-  const roadmap = await getRoadmapDetail(
+/** Published roadmap (with the viewer's progress); shared by the page and its metadata. */
+const loadRoadmap = cache(async (roadmapId: string) => {
+  const [tenant, session] = await Promise.all([
+    resolveTenantFromHeaders(),
+    getServerSession(),
+  ]);
+  if (!tenant) return null;
+  return getRoadmapDetail(
     tenant.organizationId,
     roadmapId,
     session?.user.id ?? null,
   );
+});
+
+type Props = { params: Promise<{ roadmapId: string }> };
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { roadmapId } = await params;
+  const roadmap = await loadRoadmap(roadmapId);
+  if (!roadmap) return { title: "Roadmap not found" };
+  return {
+    title: roadmap.title,
+    description:
+      roadmap.description?.slice(0, 160) ||
+      `A ${roadmap.courseCount}-course learning path with a certificate when you finish.`,
+    alternates: { canonical: `/roadmaps/${roadmap.slug}` },
+    // The loader substitutes a stock image for a missing cover; keep the brand card then.
+    ...(await shareImageMetadata(
+      roadmap.thumbnail !== resolveMediaUrl(null) ? roadmap.thumbnail : null,
+      roadmap.title,
+    )),
+  };
+}
+
+export default async function RoadmapDetailPage({ params }: Props) {
+  const { roadmapId } = await params;
+  const [session, roadmap] = await Promise.all([
+    getServerSession(),
+    loadRoadmap(roadmapId),
+  ]);
   if (!roadmap) notFound();
 
   // Latest payment per not-yet-enrolled paid course, so a pending review isn't offered "Enroll" again.
@@ -96,7 +120,7 @@ export default async function RoadmapDetailPage({ params }: Props) {
             <div className="mt-6 flex flex-wrap gap-5 text-sm text-[#324361]">
               <span className="inline-flex items-center gap-1.5">
                 <BookOpen className="size-4 text-brand-purple" />
-                {roadmap.courseCount} courses
+                {pluralize(roadmap.courseCount, "course")}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Clock className="size-4 text-brand-teal" />
@@ -112,6 +136,7 @@ export default async function RoadmapDetailPage({ params }: Props) {
                 roadmapId={roadmap.id}
                 slug={roadmap.slug}
                 alreadyEnrolled={roadmap.enrolled}
+                viewerRole={session?.user.role ?? null}
                 courseCount={roadmap.courseCount}
               />
               <Button href="/roadmaps" variant="secondary">
@@ -173,9 +198,15 @@ export default async function RoadmapDetailPage({ params }: Props) {
               Courses in this path
             </h2>
             <p className="mt-1 text-sm text-muted">
-              Complete them in order. Each course earns its own certificate;
-              finish all for the roadmap credential.
+              Taking them in this order is recommended. Each course earns its
+              own certificate; finish them all for the roadmap certificate.
             </p>
+            {paidCourseIds.length > 0 ? (
+              <p className="mt-2 text-xs text-[#5c6b82]">
+                Paid courses: pay via eSewa, mobile banking, or Khalti QR — then
+                upload your screenshot.
+              </p>
+            ) : null}
             <ol className="mt-6 space-y-4">
               {roadmap.courses.map((course, index) => (
                 <li
@@ -221,7 +252,7 @@ export default async function RoadmapDetailPage({ params }: Props) {
                         ) : null}
                       </div>
                     </div>
-                    <div className="shrink-0 sm:w-40">
+                    <div className="shrink-0 sm:min-w-40">
                       {course.enrolled ? (
                         <Button
                           href={
@@ -239,9 +270,11 @@ export default async function RoadmapDetailPage({ params }: Props) {
                           courseId={course.id}
                           slug={course.slug}
                           courseTitle={course.title}
+                          viewerRole={session?.user.role ?? null}
                           priceLabel={formatCoursePrice(course)}
                           requiresPayment={courseRequiresPayment(course)}
                           {...paymentStateFor(course.id)}
+                          hidePaymentHint
                         />
                       )}
                     </div>

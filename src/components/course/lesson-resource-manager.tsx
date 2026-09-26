@@ -17,6 +17,7 @@ import {
   parseQuizPayload,
   serializeQuizPayload,
 } from "@/lib/lesson-resources";
+import { UPLOAD_ACCEPT, uploadFile } from "@/lib/upload-client";
 import type { LessonResourceType, QuizPayload } from "@/types/lesson-resource";
 
 type ResourceRow = {
@@ -281,19 +282,12 @@ export function LessonResourceManager({ lessonId }: { lessonId: string }) {
     }
   }
 
-  async function uploadFile(resource: ResourceRow, file: File) {
+  async function uploadResourceFile(resource: ResourceRow, file: File) {
     setBusy(`upload-${resource.id}`);
     setError(null);
     try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("provider", "imagekit");
-      form.set("purpose", "lesson-resource");
-      const uploaded = await api<{ upload: { url: string } }>("/api/upload", {
-        method: "POST",
-        body: form,
-      });
-      const next = { ...resource, url: uploaded.upload.url };
+      const { url } = await uploadFile(file, "lesson-resource");
+      const next = { ...resource, url };
       setResources((current) =>
         current.map((item) => (item.id === resource.id ? next : item)),
       );
@@ -347,6 +341,7 @@ export function LessonResourceManager({ lessonId }: { lessonId: string }) {
                       {typeLabels[resource.type]}
                     </span>
                     <input
+                      maxLength={200}
                       value={resource.title}
                       onChange={(e) =>
                         updateResource(resource.id, { title: e.target.value })
@@ -391,8 +386,8 @@ export function LessonResourceManager({ lessonId }: { lessonId: string }) {
                         }
                         placeholder={
                           resource.type === "VIDEO"
-                            ? "Video URL"
-                            : "File URL or external link"
+                            ? "YouTube URL"
+                            : "Upload a file or paste an https:// link"
                         }
                         className="min-w-0 flex-1 rounded-lg border border-black/8 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-purple/20"
                       />
@@ -402,14 +397,14 @@ export function LessonResourceManager({ lessonId }: { lessonId: string }) {
                           className={`inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-black/10 px-3 py-2 text-xs font-semibold text-brand-navy hover:bg-surface ${busy ? "pointer-events-none opacity-50" : ""}`}
                         >
                           <Upload className="size-3.5" />
-                          Upload
+                          {busy === `upload-${resource.id}` ? "Uploading…" : "Upload"}
                           <input
                             type="file"
-                            accept=".pdf,.txt,.zip,image/*"
+                            accept={UPLOAD_ACCEPT.document}
                             className="sr-only"
                             onChange={(e) => {
                               const file = e.target.files?.[0];
-                              if (file) void uploadFile(resource, file);
+                              if (file) void uploadResourceFile(resource, file);
                               e.currentTarget.value = "";
                             }}
                           />
@@ -457,6 +452,7 @@ export function LessonResourceManager({ lessonId }: { lessonId: string }) {
           <option value="QUIZ">Quiz</option>
         </select>
         <input
+          maxLength={200}
           value={newTitle}
           onChange={(e) => setNewTitle(e.target.value)}
           placeholder="Resource title"

@@ -14,22 +14,18 @@ export function NewsletterForm() {
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const website = new FormData(event.currentTarget).get("website");
     setStatus({ kind: "sending" });
     try {
       const res = await fetch("/api/newsletter/subscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, source: "footer" }),
+        body: JSON.stringify({ email, source: "footer", website }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Could not subscribe");
       setEmail("");
-      setStatus({
-        kind: "done",
-        message: data.alreadySubscribed
-          ? "You're already on the list."
-          : "Subscribed — thanks!",
-      });
+      setStatus({ kind: "done", message: "Thanks! You're on the list." });
     } catch (error) {
       setStatus({
         kind: "error",
@@ -39,13 +35,20 @@ export function NewsletterForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="w-full max-w-sm space-y-2">
+    <form onSubmit={onSubmit} className="relative w-full max-w-sm space-y-2">
       <label htmlFor={inputId} className="block text-sm font-semibold text-white">
         Newsletter
       </label>
       <p className="text-sm text-white/60">
         New courses and learning paths, straight to your inbox.
       </p>
+      {/* Honeypot: hidden from people and assistive tech; bots tend to fill it. */}
+      <div aria-hidden="true" className="absolute -left-[9999px] size-px overflow-hidden">
+        <label>
+          Website
+          <input type="text" name="website" tabIndex={-1} autoComplete="off" defaultValue="" />
+        </label>
+      </div>
       <div className="flex gap-2">
         <input
           id={inputId}

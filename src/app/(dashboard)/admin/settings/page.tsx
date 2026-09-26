@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight } from "lucide-react";
@@ -5,20 +6,30 @@ import { readOrganizationSettings } from "@/app/api/admin/organization/organizat
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import { ChangePasswordForm } from "@/components/profile/change-password-form";
 import { prisma } from "@/lib/db";
-import { requireAdminPage } from "@/lib/page-guards";
+import { getEmailMode } from "@/lib/email";
+import {
+  isImageKitConfigured,
+  isLocalUploadEnabled,
+  isYouTubeConfigured,
+} from "@/lib/media";
+import { loginRedirectPath, requireAdminPage } from "@/lib/page-guards";
+import { currentInstitutionUserWhere } from "@/lib/user-admin";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
+import { EmailDeliveryCard } from "./email-delivery-card";
 import { OrganizationSettingsForm } from "./organization-settings-form";
 
+export const metadata: Metadata = { title: "Settings" };
+
 export default async function AdminSettingsPage() {
-  await requireAdminPage();
+  const session = await requireAdminPage();
 
   const ctx = await resolveTenantFromHeaders();
-  if (!ctx) redirect("/login");
+  if (!ctx) redirect(await loginRedirectPath());
 
   const { organization } = ctx;
   const [courseCount, userCount, paymentPending] = await Promise.all([
     prisma.course.count({ where: { organizationId: organization.id } }),
-    prisma.user.count(),
+    prisma.user.count({ where: currentInstitutionUserWhere(organization.id) }),
     prisma.payment.count({
       where: {
         status: "PENDING",
@@ -40,7 +51,7 @@ export default async function AdminSettingsPage() {
         subtitle={`${organization.name} · institute profile and platform setup`}
       />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:gap-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-5">
         <OrganizationSettingsForm
           slug={organization.slug}
           initialValues={readOrganizationSettings(organization)}
@@ -70,8 +81,18 @@ export default async function AdminSettingsPage() {
           <section className="rounded-2xl border border-black/5 bg-white p-4 text-sm text-muted shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-5">
             <h2 className="text-base font-semibold text-brand-navy">Media & payments</h2>
             <ul className="mt-3 list-disc space-y-1.5 pl-5">
-              <li>Lesson videos upload to YouTube (unlisted) when YOUTUBE_* is set.</li>
-              <li>Screenshots and images use ImageKit when IMAGEKIT_* is set.</li>
+              <li>
+                {isYouTubeConfigured()
+                  ? "Lesson videos upload to your YouTube channel as unlisted videos."
+                  : "Lesson video uploads aren't set up — instructors can paste YouTube links instead. Ask your technical admin to connect YouTube."}
+              </li>
+              <li>
+                {isImageKitConfigured()
+                  ? "Images and payment screenshots are stored with ImageKit."
+                  : isLocalUploadEnabled()
+                    ? "Images and payment screenshots are saved on this server for testing. Ask your technical admin to connect ImageKit before going live."
+                    : "Image uploads aren't set up — ask your technical admin to connect ImageKit."}
+              </li>
               <li>
                 Course purchases use manual payment proof — manage methods under{" "}
                 <Link href="/admin/payments" className="font-semibold text-brand-purple hover:text-brand-teal">
@@ -79,9 +100,14 @@ export default async function AdminSettingsPage() {
                 </Link>
                 .
               </li>
-              <li>Newsletter email delivery isn&apos;t configured yet.</li>
             </ul>
           </section>
+
+          <EmailDeliveryCard
+            mode={getEmailMode()}
+            sender={process.env.EMAIL_FROM?.trim() || null}
+            adminEmail={session.user.email}
+          />
 
           <ChangePasswordForm />
         </div>

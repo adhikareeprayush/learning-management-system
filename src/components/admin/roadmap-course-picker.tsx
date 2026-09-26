@@ -3,21 +3,14 @@
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, Search, X } from "lucide-react";
 import { CourseStatusBadge } from "@/components/admin/roadmap-badges";
+import { formatDuration } from "@/lib/format";
 import { formatCoursePrice } from "@/lib/pricing";
 import type { AdminRoadmapCourse } from "@/lib/roadmap-admin";
-
-function formatDuration(minutes: number) {
-  if (minutes <= 0) return null;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h === 0) return `${m}m`;
-  return m === 0 ? `${h}h` : `${h}h ${m}m`;
-}
 
 function CourseMeta({ course }: { course: AdminRoadmapCourse }) {
   const parts = [
     course.instructorName,
-    formatDuration(course.duration),
+    course.duration > 0 ? formatDuration(course.duration) : null,
     formatCoursePrice(course),
   ].filter(Boolean);
   return <p className="mt-0.5 truncate text-xs text-muted">{parts.join(" · ")}</p>;

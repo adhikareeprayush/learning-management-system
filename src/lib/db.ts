@@ -20,19 +20,22 @@ const REQUIRED_DELEGATES = [
   "newsletterSubscriber",
   "newsletterCampaign",
   "organization",
+  "newsletterDelivery",
+  "contactMessage",
+  "rateLimit",
 ] as const;
 
 function createPrismaClient(connectionString: string) {
   const pool = new Pool({
     connectionString,
-    max: 10,
+    // Serverless instances each hold their own pool; keep them small there.
+    max: Number(process.env.DB_POOL_MAX) || (process.env.VERCEL ? 3 : 10),
+    idleTimeoutMillis: 10_000,
     connectionTimeoutMillis: 10_000,
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    globalForPrisma.pgPool = pool;
-    globalForPrisma.databaseUrl = connectionString;
-  }
+  globalForPrisma.pgPool = pool;
+  globalForPrisma.databaseUrl = connectionString;
 
   return new PrismaClient({ adapter: new PrismaPg(pool) });
 }
@@ -68,7 +71,13 @@ function getPrismaClient() {
   const cached = globalForPrisma.prisma;
   const urlChanged = globalForPrisma.databaseUrl !== connectionString;
 
-  if (cached && !urlChanged && missingDelegates(cached).length === 0) {
+  // The stale-model check only matters when HMR reloads the generated client.
+  if (
+    cached &&
+    !urlChanged &&
+    (process.env.NODE_ENV === "production" ||
+      missingDelegates(cached).length === 0)
+  ) {
     return cached;
   }
 
@@ -85,14 +94,11 @@ function getPrismaClient() {
     );
   }
 
-  if (process.env.NODE_ENV !== "production") {
-    globalForPrisma.prisma = client;
-  }
-
+  globalForPrisma.prisma = client;
   return client;
 }
 
-/** Lazy proxy so HMR does not keep a stale PrismaClient. */
+/** Lazy proxy so HMR does not keep a stale PrismaClient; one cached client per process. */
 export const prisma = new Proxy({} as PrismaClient, {
   get(_target, prop) {
     const client = getPrismaClient();

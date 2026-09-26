@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
-import { cleanString, isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
-import { findManagedCourse } from "@/lib/course-access";
+import { isTeacher, jsonError, requireSession, requireTenantApi } from "@/lib/api";
+import { boundedText, findManagedCourse, readJsonObject } from "@/lib/course-access";
 import { planReorder, reorderSteps } from "@/lib/reorder";
 
 type Params = { params: Promise<{ courseId: string }> };
@@ -44,9 +44,12 @@ export async function POST(request: Request, { params }: Params) {
     tenant.member,
   );
   if (!course) return jsonError("Course not found", 404);
-  const body = await request.json();
-  const title = cleanString(body.title, 160);
-  if (!title) return jsonError("title is required", 400);
+  const body = await readJsonObject(request);
+  if (body instanceof Response) return body;
+  const title = boundedText(body.title, "title", 160, { required: true });
+  if (!title.ok) return jsonError(title.error, 400);
+  const description = boundedText(body.description, "description", 2_000);
+  if (!description.ok) return jsonError(description.error, 400);
   const last = await prisma.module.aggregate({
     where: { courseId: course.id },
     _max: { order: true },
@@ -54,8 +57,8 @@ export async function POST(request: Request, { params }: Params) {
   const courseModule = await prisma.module.create({
     data: {
       courseId: course.id,
-      title,
-      description: cleanString(body.description) || null,
+      title: title.value,
+      description: description.value || null,
       order: last._max.order === null ? 0 : last._max.order + 1,
     },
   });

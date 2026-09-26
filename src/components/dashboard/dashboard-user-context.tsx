@@ -9,6 +9,7 @@ export type DashboardUser = {
   image?: string | null;
   /** Legacy dashboard chrome role: ADMIN | INSTRUCTOR | STUDENT */
   role: string;
+  emailVerified?: boolean;
   orgRole?: string;
   orgRoleLabel?: string;
   organizationName?: string;

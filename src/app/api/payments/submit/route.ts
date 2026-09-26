@@ -6,6 +6,8 @@ import {
   requireSession,
   requireTenantApi,
 } from "@/lib/api";
+import { readJsonObject } from "@/lib/course-access";
+import { notifyPaymentSubmitted } from "@/lib/email-notifications";
 import { isTrustedPaymentScreenshotUrl, submitCoursePayment } from "@/lib/payments";
 
 export async function POST(request: Request) {
@@ -16,7 +18,8 @@ export async function POST(request: Request) {
   if (tenant instanceof Response) return tenant;
 
   try {
-    const body = await request.json().catch(() => ({}));
+    const body = await readJsonObject(request);
+    if (body instanceof Response) return body;
     const courseId = cleanString(body.courseId, 80);
     const paymentMethodId = cleanString(body.paymentMethodId, 80);
     const screenshotUrl = cleanString(body.screenshotUrl, 2048);
@@ -42,6 +45,7 @@ export async function POST(request: Request) {
       return jsonError(result.error, result.status);
     }
 
+    notifyPaymentSubmitted(result.payment.id);
     return Response.json({ payment: result.payment }, { status: 201 });
   } catch (error) {
     console.error("POST /api/payments/submit", error);

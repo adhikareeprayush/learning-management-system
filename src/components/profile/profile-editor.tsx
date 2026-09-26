@@ -25,6 +25,7 @@ import type {
   ProfileActivity,
   ProfileStats,
 } from "@/lib/profile-data";
+import { UPLOAD_ACCEPT, uploadFile } from "@/lib/upload-client";
 
 type Profile = {
   name: string;
@@ -129,17 +130,7 @@ export function ProfileEditor({
     setBusy(true);
     setError(null);
     try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("provider", "imagekit");
-      form.set("purpose", "avatar");
-      const uploadResponse = await fetch("/api/upload", {
-        method: "POST",
-        body: form,
-      });
-      const upload = await uploadResponse.json().catch(() => ({}));
-      if (!uploadResponse.ok) throw new Error(upload.error || "Could not upload avatar");
-      const image = String(upload.upload.url);
+      const { url: image } = await uploadFile(file, "avatar");
       const response = await fetch("/api/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -267,7 +258,7 @@ export function ProfileEditor({
                 Photo
                 <input
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/avif"
+                  accept={UPLOAD_ACCEPT.image}
                   className="sr-only"
                   onChange={(event) => {
                     const file = event.target.files?.[0];
@@ -346,6 +337,7 @@ export function ProfileEditor({
                   <span className="mb-1 block text-sm font-medium">Full name</span>
                   <input
                     required
+                    maxLength={120}
                     value={draft.name}
                     onChange={(e) =>
                       setDraft((c) => ({ ...c, name: e.target.value }))
@@ -356,6 +348,7 @@ export function ProfileEditor({
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium">Headline</span>
                   <input
+                    maxLength={160}
                     value={draft.headline}
                     onChange={(e) =>
                       setDraft((c) => ({ ...c, headline: e.target.value }))
@@ -367,6 +360,7 @@ export function ProfileEditor({
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium">Bio</span>
                   <textarea
+                    maxLength={2000}
                     value={draft.bio}
                     onChange={(e) =>
                       setDraft((c) => ({ ...c, bio: e.target.value }))
@@ -379,6 +373,7 @@ export function ProfileEditor({
                   <label className="block">
                     <span className="mb-1 block text-sm font-medium">Location</span>
                     <input
+                      maxLength={120}
                       value={draft.location}
                       onChange={(e) =>
                         setDraft((c) => ({ ...c, location: e.target.value }))
@@ -390,6 +385,7 @@ export function ProfileEditor({
                   <label className="block">
                     <span className="mb-1 block text-sm font-medium">Phone</span>
                     <input
+                      maxLength={40}
                       value={draft.phone}
                       onChange={(e) =>
                         setDraft((c) => ({ ...c, phone: e.target.value }))
@@ -401,6 +397,7 @@ export function ProfileEditor({
                   <label className="block sm:col-span-2">
                     <span className="mb-1 block text-sm font-medium">Website</span>
                     <input
+                      maxLength={300}
                       value={draft.website}
                       onChange={(e) =>
                         setDraft((c) => ({ ...c, website: e.target.value }))
@@ -412,6 +409,7 @@ export function ProfileEditor({
                   <label className="block">
                     <span className="mb-1 block text-sm font-medium">LinkedIn</span>
                     <input
+                      maxLength={300}
                       value={draft.linkedIn}
                       onChange={(e) =>
                         setDraft((c) => ({ ...c, linkedIn: e.target.value }))
@@ -423,6 +421,7 @@ export function ProfileEditor({
                   <label className="block">
                     <span className="mb-1 block text-sm font-medium">GitHub</span>
                     <input
+                      maxLength={300}
                       value={draft.github}
                       onChange={(e) =>
                         setDraft((c) => ({ ...c, github: e.target.value }))

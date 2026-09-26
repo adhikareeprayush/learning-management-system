@@ -201,7 +201,6 @@ function DashboardSearch({ role }: { role: DashboardRole }) {
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder={searchPlaceholder(role)}
           aria-label={searchPlaceholder(role)}
           aria-expanded={open}
           aria-controls={listboxId}
@@ -212,6 +211,16 @@ function DashboardSearch({ role }: { role: DashboardRole }) {
           autoComplete="off"
           className="h-10 w-full rounded-xl border border-black/8 bg-white pl-9 pr-9 text-sm outline-none transition placeholder:text-muted/70 focus:border-brand-purple/40"
         />
+        {/* A native placeholder can't change with the breakpoint; the full hint is cut off on phones. */}
+        {query ? null : (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 left-9 right-3 flex items-center text-sm text-muted/70"
+          >
+            <span className="truncate sm:hidden">Search…</span>
+            <span className="hidden truncate sm:inline">{searchPlaceholder(role)}</span>
+          </span>
+        )}
         {query ? (
           <button
             type="button"

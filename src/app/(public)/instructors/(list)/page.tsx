@@ -1,9 +1,17 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { GraduationCap } from "lucide-react";
 import { PageHero } from "@/components/layout/page-hero";
 import { getInstructorsFromDb } from "@/lib/dashboard-data";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
+
+export const metadata: Metadata = {
+  title: "Instructors",
+  description:
+    "Meet the instructors who build and teach our courses, and browse what each of them teaches.",
+  alternates: { canonical: "/instructors" },
+};
 
 export default async function InstructorsPage() {
   const ctx = await resolveTenantFromHeaders();
@@ -20,7 +28,7 @@ export default async function InstructorsPage() {
             Our <span className="text-brand-mint">instructors</span>
           </>
         }
-        description="Meet the instructors at this institute."
+        description="Meet the people who build and teach our courses."
         icon={GraduationCap}
       />
       <div className="mx-auto grid max-w-[1440px] gap-6 px-5 py-14 sm:grid-cols-2 lg:grid-cols-4 md:px-10 lg:px-16">

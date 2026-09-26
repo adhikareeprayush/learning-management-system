@@ -1,15 +1,24 @@
+import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { CourseCard } from "@/components/course/course-card";
 import { Button } from "@/components/ui/button";
 import { getFeaturedCoursesForHome } from "@/lib/dashboard-data";
+import { getInstituteProfile } from "@/lib/institute";
 import { staticAssets } from "@/lib/static-assets";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
 
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
+
 export default async function HomePage() {
-  const ctx = await resolveTenantFromHeaders();
-  const brandName = ctx?.organization.name ?? "Convolution LMS";
+  const [ctx, institute] = await Promise.all([
+    resolveTenantFromHeaders(),
+    getInstituteProfile(),
+  ]);
+  const brandName = institute.name;
   const featuredCourses = ctx
     ? await getFeaturedCoursesForHome(ctx.organizationId)
     : [];
@@ -36,8 +45,9 @@ export default async function HomePage() {
               <span className="block text-brand-mint">Get certified.</span>
             </h1>
             <p className="max-w-lg text-base leading-relaxed text-white/80 md:text-lg">
-              Courses, roadmaps, and lesson videos — enroll with free access or
-              pay by screenshot for paid courses.
+              Self-paced video courses and learning roadmaps. Start with free
+              preview lessons, pay for paid courses with eSewa, Khalti, or
+              mobile banking, and earn certificates anyone can verify.
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <Button href="/courses" className="min-w-[148px]">
@@ -85,7 +95,7 @@ export default async function HomePage() {
                 Featured courses
               </h2>
               <p className="mt-1 text-sm text-muted">
-                From the live catalog.
+                Popular picks to get you started.
               </p>
             </div>
             <Link
@@ -103,16 +113,21 @@ export default async function HomePage() {
               ))}
             </div>
           ) : (
-            <p className="rounded-2xl border border-dashed border-black/10 bg-white px-6 py-12 text-center text-sm text-muted">
-              {ctx
-                ? "No featured courses yet."
-                : "Database is not connected. Point DATABASE_URL at local Docker (:5435) or a Supabase pooler URI, then run pnpm db:seed."}{" "}
-              {ctx ? (
-                <Link href="/courses" className="font-semibold text-brand-purple">
-                  Browse the catalog
+            <div className="rounded-2xl border border-dashed border-black/10 bg-white px-6 py-12 text-center">
+              <p className="font-semibold text-brand-navy">
+                New courses are on the way
+              </p>
+              <p className="mt-1 text-sm text-muted">
+                Check back soon — or{" "}
+                <Link
+                  href="/roadmaps"
+                  className="font-semibold text-brand-purple hover:text-brand-teal"
+                >
+                  explore our learning roadmaps
                 </Link>
-              ) : null}
-            </p>
+                .
+              </p>
+            </div>
           )}
         </div>
       </section>

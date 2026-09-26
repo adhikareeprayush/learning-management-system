@@ -156,6 +156,13 @@ async function completeLessonsForStudent(
 }
 
 async function main() {
+  if (process.env.NODE_ENV === "production" && process.env.SEED_DEMO !== "true") {
+    throw new Error(
+      "Refusing to seed demo users and courses (all with password \"password123\") while NODE_ENV=production. " +
+        "Create the first admin with `pnpm admin:create` instead, or set SEED_DEMO=true for a disposable demo database.",
+    );
+  }
+
   console.log("Seeding database...");
 
   const plans = [

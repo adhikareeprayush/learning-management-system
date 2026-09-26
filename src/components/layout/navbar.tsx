@@ -13,7 +13,12 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-export function Navbar() {
+type NavbarProps = {
+  brandName?: string;
+  logoUrl?: string | null;
+};
+
+export function Navbar({ brandName, logoUrl }: NavbarProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const panelId = useId();
@@ -21,7 +26,7 @@ export function Navbar() {
   return (
     <header className="relative z-50 w-full border-b border-black/[0.04] bg-white">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-3 px-4 sm:h-[72px] sm:px-5 md:px-10 lg:px-16">
-        <Logo />
+        <Logo name={brandName} logoUrl={logoUrl} />
 
         <nav className="hidden lg:block" aria-label="Primary">
           <ul className="flex items-center gap-7">

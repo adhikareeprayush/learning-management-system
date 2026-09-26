@@ -1,14 +1,17 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AdminReportsView } from "@/components/dashboard/admin-reports-view";
 import { getAdminReportsData } from "@/lib/dashboard-data";
-import { requireAdminPage } from "@/lib/page-guards";
+import { loginRedirectPath, requireAdminPage } from "@/lib/page-guards";
 import { resolveTenantFromHeaders } from "@/lib/tenant";
+
+export const metadata: Metadata = { title: "Reports" };
 
 export default async function AdminReportsPage() {
   await requireAdminPage();
 
   const ctx = await resolveTenantFromHeaders();
-  if (!ctx) redirect("/login");
+  if (!ctx) redirect(await loginRedirectPath());
 
   const [sevenDay, thirtyDay, sixMonth] = await Promise.all([
     getAdminReportsData(ctx.organizationId, "7d"),
